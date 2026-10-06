@@ -1,0 +1,25 @@
+{
+  "name": "roadmap-svelte",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "generate-topics": "node scripts/generate-topics.js",
+    "prebuild": "node scripts/generate-topics.js",
+    "predev": "node scripts/generate-topics.js",
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-static": "^3.0.6",
+    "@sveltejs/kit": "^2.9.0",
+    "@sveltejs/vite-plugin-svelte": "^5.0.0",
+    "svelte": "^5.0.0",
+    "vite": "^6.0.0"
+  },
+  "dependencies": {
+    "marked": "^15.0.0",
+    "prismjs": "^1.29.0"
+  },
+  "type": "module"
+}
