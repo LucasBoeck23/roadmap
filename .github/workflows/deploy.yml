@@ -22,27 +22,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          dotnet-version: '10.0.x'
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/roadmap-svelte/package-lock.json
 
-      - name: Publish Blazor WASM
-        run: dotnet publish web/RoadmapApp/RoadmapApp.csproj -c Release -o output
+      - name: Install dependencies
+        run: npm ci
+        working-directory: web/roadmap-svelte
 
-      - name: Fix base path for GitHub Pages
-        run: sed -i 's|<base href="/" />|<base href="/roadmap/" />|g' output/wwwroot/index.html
-
-      - name: Add .nojekyll
-        run: touch output/wwwroot/.nojekyll
-
-      - name: Copy 404 fallback
-        run: cp output/wwwroot/index.html output/wwwroot/404.html
+      - name: Build Svelte
+        run: npm run build
+        working-directory: web/roadmap-svelte
+        env:
+          BASE_PATH: /roadmap
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: output/wwwroot
+          path: web/roadmap-svelte/build
 
       - name: Deploy to GitHub Pages
         id: deployment
