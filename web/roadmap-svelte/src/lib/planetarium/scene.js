@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { PLANET_COLORS, STATUS_STYLE } from './constants.js';
-import { orbitalPosition, orbitPoints } from './orbit.js';
+import { orbitalPosition } from './orbit.js';
 import { createStarfield, createStar, createPlanet, createMoon } from './factory.js';
 import { disposeObject } from './dispose.js';
 
@@ -18,6 +18,8 @@ export class SolarSystem {
 		this.moons   = {}; // "trackId::idx" → { angle, mesh, label, orbitLine, radius, speed, inclination, topic }
 		this.clickables = []; // { mesh, type, id, topic }
 		this.selectedPlanetId = null;
+		this.focused = false;   // true quando um planeta está em foco
+		this.starParts = [];    // objetos que compõem a estrela (para ocultar no foco)
 		this.starLight = null;
 	}
 
@@ -25,7 +27,8 @@ export class SolarSystem {
 	build(tracks) {
 		this.clear();
 		this.scene.add(createStarfield());
-		createStar().forEach(o => this.scene.add(o));
+		this.starParts = createStar();
+		this.starParts.forEach(o => this.scene.add(o));
 
 		tracks.forEach((track, idx) => {
 			const color       = PLANET_COLORS[idx % PLANET_COLORS.length];
@@ -59,8 +62,8 @@ export class SolarSystem {
 		const pd = this.planets[trackId];
 		if (!pd || !pd.topics.length) return;
 
-		pd.topics.forEach((topic, idx) => {
-			const ring    = Math.floor(idx / 5);
+		pd.topics.forEach((topic, idx) => {		
+			const ring    = idx / 3
 			const perRing = 5 + ring * 2;
 			const radius  = 32 + ring * 26;
 			const phase   = ((idx % perRing) / perRing) * Math.PI * 2;
@@ -96,26 +99,30 @@ export class SolarSystem {
 	// ── Simulação (chamada a cada frame) ───────────────────────────────────────
 	update(dt, elapsed) {
 		Object.values(this.planets).forEach(pd => {
-			pd.angle += pd.speed * dt * 60;
-			const wpos = orbitalPosition(pd.angle, pd.radius, pd.inclination);
+			const isFocusTarget = this.focused && pd.track.id === this.selectedPlanetId;
+			let wpos;
+			if (isFocusTarget) {
+				wpos = new THREE.Vector3(0, 0, 0);
+			} else {
+				pd.angle += pd.speed * dt * 60;
+				wpos = orbitalPosition(pd.angle, pd.radius, pd.inclination);
+			}
 			pd.mesh.position.copy(wpos);
 			pd.label.position.copy(wpos).y += 11;
 			pd.mesh.rotation.y += 0.003;
 
-			// Luas deste planeta — centro = posição atual do planeta
+			// Luas deste planeta. Elas só existem em modo foco, com o planeta
+			// fixo no centro (0,0,0) — então a órbita da lua é ESTÁTICA.
+			// A linha é criada uma vez em createMoon e nunca recalculada.
+			// (Recalcular aqui com um nº de pontos diferente do original gerava
+			//  vértices-lixo e aquelas linhas retas espúrias no canvas.)
 			Object.keys(this.moons).filter(k => k.startsWith(pd.track.id + '::')).forEach(k => {
 				const md = this.moons[k];
 				md.angle += md.speed * dt * 60;
-				const mpos = orbitalPosition(md.angle, md.radius, md.inclination, wpos);
+				const mpos = orbitalPosition(md.angle, md.radius, md.inclination);
 				md.mesh.position.copy(mpos);
 				md.label.position.copy(mpos).y += 7;
 				md.mesh.rotation.y += 0.004;
-
-				// Linha de órbita segue o planeta — atualizada a cada 4 frames
-				if (Math.round(elapsed * 60) % 4 === 0) {
-					md.orbitLine.geometry.setFromPoints(orbitPoints(md.radius, md.inclination, wpos, 120));
-					md.orbitLine.geometry.attributes.position.needsUpdate = true;
-				}
 			});
 		});
 
@@ -123,26 +130,38 @@ export class SolarSystem {
 	}
 
 	// ── Foco ───────────────────────────────────────────────────────────────────
-	/** Anima a opacidade de tudo exceto o planeta selecionado. */
-	fade(targetOpacity, duration = 600) {
-		const targets = [];
-		this.scene.children
-			.filter(o => o.userData.removable && o.userData.planetId !== this.selectedPlanetId)
-			.forEach(o => o.traverse(child => {
-				if (!child.isMesh && !child.isLine && !child.isSprite) return;
-				[child.material].flat().filter(Boolean).forEach(m => {
-					if (!m.transparent) m.transparent = true;
-					targets.push({ mat: m, from: m.opacity ?? 1, to: targetOpacity });
-				});
-			}));
+	/**
+	 * Entra em modo foco: oculta estrela, demais planetas e as órbitas do
+	 * sistema solar. O planeta selecionado é fixado no centro (ver update).
+	 */
+	enterFocus(trackId) {
+		this.selectedPlanetId = trackId;
+		this.focused = true;
 
-		const start = performance.now();
-		(function step(now) {
-			const t = Math.min((now - start) / duration, 1);
-			const ease = t < 0.5 ? 2*t*t : -1 + (4 - 2*t) * t;
-			targets.forEach(({ mat, from, to }) => { mat.opacity = from + (to - from) * ease; });
-			if (t < 1) requestAnimationFrame(step);
-		})(start);
+		this.starParts.forEach(o => { o.visible = false; });
+		if (this.starLight) this.starLight.visible = false;
+
+		Object.entries(this.planets).forEach(([id, pd]) => {
+			const isTarget = id === trackId;
+			pd.mesh.visible      = isTarget;
+			pd.label.visible     = isTarget;
+			pd.orbitLine.visible = false;
+		});
+	}
+
+	/** Sai do modo foco: mostra tudo de volta. */
+	exitFocus() {
+		this.focused = false;
+		this.selectedPlanetId = null;
+
+		this.starParts.forEach(o => { o.visible = true; });
+		if (this.starLight) this.starLight.visible = true;
+
+		Object.values(this.planets).forEach(pd => {
+			pd.mesh.visible      = true;
+			pd.label.visible     = true;
+			pd.orbitLine.visible = true;
+		});
 	}
 
 	// ── Raycasting ──────────────────────────────────────────────────────────────

@@ -96,19 +96,18 @@
 	function selectPlanet(id) {
 		if (solar.selectedPlanetId === id) { deselectPlanet(); return; }
 		if (solar.selectedPlanetId) solar.removeMoons(solar.selectedPlanetId);
-
-		solar.selectedPlanetId = id;
 		if (!solar.planets[id]) return;
 
-		solar.fade(0, 500);
-		orbitalCam.focusOn(new THREE.Vector3(0, 0, 0), 120);
-		setTimeout(() => solar.buildMoons(id), 300);
+		// Oculta o resto do sistema e fixa o planeta no centro (0,0,0)
+		solar.enterFocus(id);
+		// Câmera foca no centro, onde o planeta agora está
+		orbitalCam.focusOn(new THREE.Vector3(0, 0, 0), 70);
+		setTimeout(() => solar.buildMoons(id), 200);
 	}
 
 	function deselectPlanet() {
 		if (solar.selectedPlanetId) solar.removeMoons(solar.selectedPlanetId);
-		solar.selectedPlanetId = null;
-		solar.fade(1, 600);
+		solar.exitFocus();
 		orbitalCam.reset(180);
 	}
 
