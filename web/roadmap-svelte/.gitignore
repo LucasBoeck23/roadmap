@@ -3,3 +3,4 @@ build/
 .svelte-kit/
 static/data/topics.json
 static/src/
+static/downloads/

@@ -5,10 +5,11 @@
 	import Prism          from 'prismjs';
 	import 'prismjs/components/prism-csharp';
 	import 'prismjs/components/prism-dart';
-	import { initResizer }     from '$lib/resizer.js';
+	import { base }            from '$app/paths';
 	import { getTrackList, getTopicsByTrack, getReadme, getFile } from '$lib/topicService.js';
 	import { nivelLabel }      from '$lib/tracks.js';
 	import { PLANET_COLORS }   from '$lib/planetarium/constants.js';
+	import { pctFromDrag, resolveSplit, SPLIT_DEFAULT } from '$lib/splitController.js';
 	import PlanetarySystem     from '$lib/components/PlanetarySystem.svelte';
 
 	// Cores dos planetas em CSS (mesma paleta do 3D) para o HUD
@@ -36,6 +37,13 @@
 	let rightContent   = $state('');
 	let rightLineCount = $state(0);
 
+	// ── Split view (painel esquerdo | resizer | painel direito) ───────────────
+	// `splitPct` guarda a % do painel esquerdo QUANDO o direito está aberto.
+	// A largura real é derivada de resolveSplit → fecha o direito e volta a 100%.
+	let splitPct   = $state(SPLIT_DEFAULT);
+	let splitViewEl = $state(null);
+	let split      = $derived(resolveSplit(rightTabs.length > 0, splitPct));
+
 	// ── Estado — Planetário ───────────────────────────────────────────────────
 	let planetaryRef     = $state(null);
 	let planetTracks     = $state([]); // tracks enriquecidas com _topics
@@ -46,7 +54,6 @@
 
 	// ── Init ──────────────────────────────────────────────────────────────────
 	onMount(async () => {
-		const cleanup = initResizer();
 		tracks = await getTrackList();
 		if (tracks.length > 0) {
 			activeTrackId = tracks[0].id;
@@ -54,8 +61,31 @@
 		}
 		// Pré-carrega tópicos de todas as tracks pro planetário
 		loadPlanetTopics();
-		return cleanup;
 	});
+
+	// ── Resizer reativo do split ───────────────────────────────────────────────
+	let dragging = false;
+	let dragStartPct = 0;
+	let dragStartX = 0;
+
+	function onResizerDown(e) {
+		dragging = true;
+		dragStartPct = splitPct;
+		dragStartX = e.clientX;
+		window.addEventListener('pointermove', onResizerMove);
+		window.addEventListener('pointerup', onResizerUp);
+		e.preventDefault();
+	}
+	function onResizerMove(e) {
+		if (!dragging || !splitViewEl) return;
+		const total = splitViewEl.getBoundingClientRect().width;
+		splitPct = pctFromDrag(dragStartPct, e.clientX - dragStartX, total);
+	}
+	function onResizerUp() {
+		dragging = false;
+		window.removeEventListener('pointermove', onResizerMove);
+		window.removeEventListener('pointerup', onResizerUp);
+	}
 
 	async function loadPlanetTopics() {
 		const enriched = await Promise.all(
@@ -117,7 +147,9 @@
 	// ── IDE — Painel direito ──────────────────────────────────────────────────
 	async function openFileInRight(filePath) {
 		if (!activeTab) return;
+		const wasEmpty = rightTabs.length === 0;
 		if (!rightTabs.includes(filePath)) rightTabs = [...rightTabs, filePath];
+		if (wasEmpty) splitPct = SPLIT_DEFAULT; // abre sempre no tamanho padrão
 		await activateRightTab(filePath);
 	}
 
@@ -134,8 +166,18 @@
 	function applyRightContent(content) {
 		rightContent = content;
 		rightLineCount = content.split('\n').length;
-		setTimeout(highlightCode, 0);
 	}
+
+	// HTML já destacado pelo Prism, recalculado sempre que o conteúdo ou o
+	// arquivo ativo mudam. Usar Prism.highlight() (retorna string) em vez de
+	// highlightElement() (muta o DOM) evita o conflito com o Svelte que fazia
+	// o painel ficar preso no primeiro arquivo aberto.
+	let rightHtml = $derived.by(() => {
+		if (!activeRightTab) return '';
+		const lang = activeRightTab.endsWith('.dart') ? 'dart' : 'csharp';
+		const grammar = Prism.languages[lang] ?? Prism.languages.clike;
+		return Prism.highlight(rightContent, grammar, lang);
+	});
 
 	function closeRightTab(filePath, e) {
 		e.stopPropagation();
@@ -150,13 +192,6 @@
 
 	function clearRightPanel() {
 		rightTabs = []; activeRightTab = null; rightContent = ''; rightLineCount = 0;
-	}
-
-	function highlightCode() {
-		document.querySelectorAll('code[class*="language-"]:not([data-highlighted])').forEach(el => {
-			Prism.highlightElement(el);
-			el.dataset.highlighted = 'yes';
-		});
 	}
 
 	// ── Planetário — painel de tópico ─────────────────────────────────────────
@@ -292,10 +327,15 @@
 
 		<div class="editor-content">
 			{#if activeTab}
-				<div class="split-view">
-					<div class="split-left">
+				<div class="split-view" bind:this={splitViewEl}>
+					<div class="split-left" style="flex: 0 0 {split.leftPct}%; width: {split.leftPct}%;">
 						<div class="doc-view">
 							<div class="doc-readme markdown-body">{@html readmeHtml}</div>
+							{#if activeTab.download}
+								<a class="ide-download" href="{base}/{activeTab.download}" download>
+									⬇ Baixar projeto (.zip)
+								</a>
+							{/if}
 							{#if activeTab.arquivos.length > 0}
 								<div class="doc-tree">
 									<div class="doc-tree-title">📂 Arquivos</div>
@@ -313,8 +353,15 @@
 						</div>
 					</div>
 					{#if rightTabs.length > 0}
-						<div class="split-resizer" id="split-resizer"></div>
-						<div class="split-right">
+						<div
+							class="split-resizer"
+							class:active={dragging}
+							role="separator"
+							aria-orientation="vertical"
+							tabindex="-1"
+							onpointerdown={onResizerDown}
+						></div>
+						<div class="split-right" style="flex: 1 1 0; min-width: 0;">
 							<div class="right-tabs">
 								{#each rightTabs as file}
 									<div
@@ -348,7 +395,7 @@
 								<div class="line-numbers" aria-hidden="true">
 									{#each { length: rightLineCount } as _, i}<span>{i + 1}</span>{/each}
 								</div>
-								<pre class="code-text"><code class={langClass(activeRightTab)}>{rightContent}</code></pre>
+								<pre class="code-text"><code class={langClass(activeRightTab)}>{@html rightHtml}</code></pre>
 							</div>
 						</div>
 					{/if}
@@ -435,6 +482,15 @@
 				<button class="topic-panel-close" onclick={closeTopicPanel} aria-label="Fechar">✕</button>
 			</div>
 			<div class="topic-panel-content">
+				{#if selectedTopic?.download}
+					<a
+						class="topic-download"
+						href="{base}/{selectedTopic.download}"
+						download
+					>
+						⬇ Baixar projeto (.zip)
+					</a>
+				{/if}
 				<div class="markdown-body">
 					{@html topicReadmeHtml}
 				</div>
@@ -610,6 +666,26 @@
 		padding: 16px 20px 20px;
 		scrollbar-width: thin;
 		scrollbar-color: rgba(74, 136, 199, 0.3) transparent;
+	}
+
+	.topic-download {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		margin-bottom: 16px;
+		padding: 8px 14px;
+		border: 1px solid rgba(74, 136, 199, 0.4);
+		border-radius: 6px;
+		background: rgba(74, 136, 199, 0.12);
+		color: #cfe0f2;
+		font-family: 'JetBrains Mono', monospace;
+		font-size: 12px;
+		text-decoration: none;
+		transition: background 0.15s, border-color 0.15s;
+	}
+	.topic-download:hover {
+		background: rgba(74, 136, 199, 0.25);
+		border-color: rgba(74, 136, 199, 0.7);
 	}
 
 	/* ── Botão toggle ────────────────────────────────────────────────────── */

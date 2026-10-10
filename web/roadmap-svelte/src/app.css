@@ -569,6 +569,25 @@ html, body {
     margin-top: 8px;
 }
 
+.ide-download {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 16px;
+    padding: 8px 14px;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    color: var(--text-primary);
+    font-size: 12px;
+    text-decoration: none;
+    transition: background 0.15s;
+}
+
+.ide-download:hover {
+    background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
 .doc-tree-title {
     font-size: 12px;
     font-weight: 600;
