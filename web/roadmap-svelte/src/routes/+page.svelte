@@ -8,7 +8,11 @@
 	import { initResizer }     from '$lib/resizer.js';
 	import { getTrackList, getTopicsByTrack, getReadme, getFile } from '$lib/topicService.js';
 	import { nivelLabel }      from '$lib/tracks.js';
+	import { PLANET_COLORS }   from '$lib/planetarium/constants.js';
 	import PlanetarySystem     from '$lib/components/PlanetarySystem.svelte';
+
+	// Cores dos planetas em CSS (mesma paleta do 3D) para o HUD
+	const PLANET_HUD_COLORS = PLANET_COLORS.map(c => '#' + c.toString(16).padStart(6, '0'));
 
 	// ── View mode ─────────────────────────────────────────────────────────────
 	// 'ide' | 'planet'
@@ -391,6 +395,28 @@
 		bind:this={planetaryRef}
 	/>
 
+	<!-- Vinheta cinematográfica -->
+	<div class="planet-vignette"></div>
+
+	<!-- HUD: título no canto superior esquerdo -->
+	<div class="hud-title">
+		<div class="hud-title-main">ROADMAP</div>
+		<div class="hud-title-sub">sistema de estudos · {planetTracks.length} trilhas</div>
+	</div>
+
+	<!-- HUD: legenda das tracks no canto superior direito -->
+	<div class="hud-legend">
+		{#each planetTracks as track, i}
+			{@const total = track._topics?.length ?? 0}
+			{@const done = track._topics?.filter(t => t.status === 'concluido').length ?? 0}
+			<div class="hud-legend-row">
+				<span class="hud-dot" style="background:{PLANET_HUD_COLORS[i % PLANET_HUD_COLORS.length]}"></span>
+				<span class="hud-legend-name">{track.nome}</span>
+				<span class="hud-legend-count">{done}/{total}</span>
+			</div>
+		{/each}
+	</div>
+
 	<!-- Hint de controles -->
 	<div class="planet-hint">
 		scroll para zoom · arrastar para navegar · clique num planeta
@@ -428,6 +454,81 @@
 		overflow: hidden;
 	}
 
+	/* Vinheta cinematográfica — escurece as bordas */
+	.planet-vignette {
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
+		background: radial-gradient(ellipse at center,
+			transparent 55%,
+			rgba(0, 0, 8, 0.35) 85%,
+			rgba(0, 0, 8, 0.7) 100%);
+		z-index: 5;
+	}
+
+	/* HUD — título */
+	.hud-title {
+		position: absolute;
+		top: 22px;
+		left: 26px;
+		pointer-events: none;
+		z-index: 10;
+		font-family: 'JetBrains Mono', monospace;
+	}
+	.hud-title-main {
+		font-size: 20px;
+		font-weight: 700;
+		letter-spacing: 6px;
+		color: rgba(220, 232, 245, 0.92);
+		text-shadow: 0 0 20px rgba(120, 170, 255, 0.4);
+	}
+	.hud-title-sub {
+		margin-top: 4px;
+		font-size: 10px;
+		letter-spacing: 1.5px;
+		color: rgba(150, 170, 210, 0.5);
+		text-transform: uppercase;
+	}
+
+	/* HUD — legenda das tracks */
+	.hud-legend {
+		position: absolute;
+		top: 22px;
+		right: 26px;
+		z-index: 10;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		padding: 12px 14px;
+		border: 1px solid rgba(90, 120, 170, 0.2);
+		border-radius: 8px;
+		background: rgba(10, 16, 30, 0.5);
+		backdrop-filter: blur(6px);
+		font-family: 'JetBrains Mono', monospace;
+		pointer-events: none;
+	}
+	.hud-legend-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 11px;
+	}
+	.hud-dot {
+		width: 9px;
+		height: 9px;
+		border-radius: 50%;
+		flex-shrink: 0;
+		box-shadow: 0 0 8px currentColor;
+	}
+	.hud-legend-name {
+		color: rgba(210, 222, 238, 0.85);
+		flex: 1;
+	}
+	.hud-legend-count {
+		color: rgba(150, 170, 210, 0.55);
+		font-size: 10px;
+	}
+
 	.planet-hint {
 		position: absolute;
 		bottom: 16px;
@@ -446,6 +547,7 @@
 		top: 50%;
 		right: 20px;
 		transform: translateY(-50%);
+		z-index: 20;
 		width: 400px;
 		max-height: 80vh;
 		background: rgba(14, 18, 32, 0.95);

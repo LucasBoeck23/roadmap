@@ -15,6 +15,7 @@
 	let canvasEl    = $state(null);
 	let renderer, scene, orbitalCam, solar, animId;
 	let composer, bloomPass;
+	let builtKey = ''; // guard contra build duplicado (ver $effect)
 	let clock = new THREE.Clock();
 	let raycaster = new THREE.Raycaster();
 	let mouseVec  = new THREE.Vector2();
@@ -42,7 +43,10 @@
 
 		solar = new SolarSystem(scene);
 		solar.starLight = starLight;
-		if (tracks.length) solar.build(tracks);
+		if (tracks.length) {
+			solar.build(tracks);
+			builtKey = tracks.map(t => t.id).join('|');
+		}
 
 		// ── Pós-processamento: bloom ──────────────────────────────────────────
 		composer = new EffectComposer(renderer);
@@ -147,8 +151,14 @@
 		resizeObserver.observe(containerEl);
 	}
 
+	// Guard: reconstrói só quando o conjunto de tracks muda de verdade.
+	// Sem isso, o build do initThree + o build do $effect rodavam os dois no
+	// mount e desenhavam DOIS sistemas sobrepostos.
 	$effect(() => {
 		if (!solar || tracks.length === 0) return;
+		const key = tracks.map(t => t.id).join('|');
+		if (key === builtKey) return;
+		builtKey = key;
 		solar.build(tracks);
 	});
 
@@ -177,11 +187,4 @@
 		oncontextmenu={e => e.preventDefault()}
 	></canvas>
 
-	<div style="
-		position:absolute; bottom:16px; left:50%; transform:translateX(-50%);
-		font-family:'JetBrains Mono',monospace; font-size:11px;
-		color:rgba(150,170,210,0.45); pointer-events:none; white-space:nowrap;
-	">
-		arrastar → orbitar ; scroll → zoom ; clique → selecionar
-	</div>
 </div>

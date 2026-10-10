@@ -36,7 +36,9 @@ export class SolarSystem {
 		tracks.forEach((track, idx) => {
 			const color       = PLANET_COLORS[idx % PLANET_COLORS.length];
 			const radius      = 50 + idx * 42;
-			const speed       = 0.0006 - idx * 0.00004;
+			// Velocidade orbital ~ 1/raio (Kepler simplificado): planetas distantes
+			// giram bem mais devagar, como num sistema solar real.
+			const speed       = 2.2 / radius * 0.01;
 			const inclination = (idx % 2 === 0 ? 1 : -1) * (0.08 + idx * 0.04);
 			const phase       = (idx / tracks.length) * Math.PI * 2;
 
