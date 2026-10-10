@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { PLANET_COLORS, STATUS_STYLE } from './constants.js';
 import { orbitalPosition } from './orbit.js';
-import { createStarfield, createStar, createPlanet, createMoon } from './factory.js';
+import { createStarfield, createSun, createPlanet, createMoon } from './factory.js';
 import { disposeObject } from './dispose.js';
 
 /**
@@ -19,7 +19,8 @@ export class SolarSystem {
 		this.clickables = []; // { mesh, type, id, topic }
 		this.selectedPlanetId = null;
 		this.focused = false;   // true quando um planeta está em foco
-		this.starParts = [];    // objetos que compõem a estrela (para ocultar no foco)
+		this.starParts = [];    // objetos que compõem o sol (para ocultar no foco)
+		this.sun = null;        // refs do sol (ver createSun)
 		this.starLight = null;
 	}
 
@@ -27,7 +28,9 @@ export class SolarSystem {
 	build(tracks) {
 		this.clear();
 		this.scene.add(createStarfield());
-		this.starParts = createStar();
+		const sun = createSun();
+		this.sun       = sun;
+		this.starParts = sun.parts;
 		this.starParts.forEach(o => this.scene.add(o));
 
 		tracks.forEach((track, idx) => {
@@ -54,6 +57,7 @@ export class SolarSystem {
 		this.clickables = [];
 		this.planets = {};
 		this.moons   = {};
+		this.sun = null;
 	}
 
 	// ── Luas ─────────────────────────────────────────────────────────────────
@@ -87,6 +91,13 @@ export class SolarSystem {
 			this.clickables = this.clickables.filter(c => c.id !== k);
 			delete this.moons[k];
 		});
+	}
+
+	moonsExtent(trackId) {
+		const pd = this.planets[trackId];
+		const lastIdx = pd.topics.length - 1;
+		const ring    = lastIdx / 3;
+		return 32 + ring * 26;
 	}
 
 	setTopics(trackId, topics) {
@@ -126,7 +137,13 @@ export class SolarSystem {
 			});
 		});
 
-		if (this.starLight) this.starLight.intensity = 4.5 + Math.sin(elapsed * 1.6) * 0.3;
+		// ── Sol: anima o plasma do shader e rotaciona a fotosfera ─────────────
+		const sun = this.sun;
+		if (sun) {
+			sun.material.uniforms.uTime.value += dt;
+			sun.surface.rotation.y += 0.0005;
+		}
+		if (this.starLight) this.starLight.intensity = 5 + Math.sin(elapsed * 1.6) * 0.4;
 	}
 
 	// ── Foco ───────────────────────────────────────────────────────────────────

@@ -26,16 +26,16 @@ export function makePlanetTex(hex, size = 256) {
 	return new THREE.CanvasTexture(c);
 }
 
-/** Textura de glow da estrela: gradiente radial branco → azul transparente. */
-export function makeStarTex(size = 256) {
+/** Glow/corona quente do Sol (gradiente radial laranja → transparente). */
+export function makeSunGlowTex(size = 256) {
 	const c = document.createElement('canvas');
 	c.width = c.height = size;
 	const ctx = c.getContext('2d');
 	const g = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
-	g.addColorStop(0,   'rgba(255,255,255,1)');
-	g.addColorStop(0.3, 'rgba(245,250,255,1)');
-	g.addColorStop(0.7, 'rgba(180,215,255,0.7)');
-	g.addColorStop(1,   'rgba(100,160,255,0)');
+	g.addColorStop(0,    'rgba(255,240,180,0.9)');
+	g.addColorStop(0.25, 'rgba(255,180,60,0.6)');
+	g.addColorStop(0.55, 'rgba(255,120,20,0.25)');
+	g.addColorStop(1,    'rgba(255,80,0,0)');
 	ctx.fillStyle = g;
 	ctx.fillRect(0, 0, size, size);
 	return new THREE.CanvasTexture(c);

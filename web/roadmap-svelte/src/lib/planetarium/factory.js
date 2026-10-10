@@ -1,6 +1,9 @@
 import * as THREE from 'three';
-import { makePlanetTex, makeStarTex, makeTextSprite } from './textures.js';
+import { makePlanetTex, makeSunGlowTex, makeTextSprite } from './textures.js';
 import { makeOrbitLine } from './orbit.js';
+import { createSunMaterial } from './sunShader.js';
+
+const SUN_RADIUS = 13; // raio base do sol
 
 /** Campo de estrelas de fundo (3000 pontos aleatórios). */
 export function createStarfield() {
@@ -16,31 +19,39 @@ export function createStarfield() {
 }
 
 /**
- * Anã branca central. Retorna os 3 objetos que a compõem:
- * esfera branca sólida (sem textura → sem costura nos polos),
- * core azulado e sprite de glow aditivo.
+ * Sol central com plasma animado (shader) + corona.
+ * Retorna { parts, surface, material, radius } onde:
+ *  - parts    array p/ ocultar em bloco no modo foco
+ *  - surface  Mesh da fotosfera (ShaderMaterial de plasma)
+ *  - material atalho para surface.material (uniform uTime animado)
+ *  - radius   raio base
  */
-export function createStar() {
-	const star = new THREE.Mesh(
-		new THREE.SphereGeometry(13, 64, 64),
-		new THREE.MeshBasicMaterial({ color: 0xffffff })
-	);
-	star.userData.removable = true;
+export function createSun() {
+	const group = new THREE.Group();
+	group.userData.removable = true;
 
-	const core = new THREE.Mesh(
-		new THREE.SphereGeometry(11, 64, 64),
-		new THREE.MeshBasicMaterial({ color: 0xe8f0ff })
-	);
-	core.userData.removable = true;
+	// Superfície: shader de plasma animado
+	const material = createSunMaterial();
+	const surface = new THREE.Mesh(new THREE.SphereGeometry(SUN_RADIUS, 96, 96), material);
+	group.add(surface);
 
+	// Corona moderada (Fase 1 — estrela estável): glow discreto + halo suave
+	const glowTex = makeSunGlowTex(256);
 	const glow = new THREE.Sprite(new THREE.SpriteMaterial({
-		map: makeStarTex(256), transparent: true, opacity: 0.4,
+		map: glowTex, transparent: true, opacity: 0.35,
 		depthTest: false, blending: THREE.AdditiveBlending
 	}));
-	glow.scale.set(90, 90, 1);
-	glow.userData.removable = true;
+	glow.scale.set(SUN_RADIUS * 3.0, SUN_RADIUS * 3.0, 1);
+	group.add(glow);
 
-	return [star, core, glow];
+	const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+		map: glowTex, transparent: true, opacity: 0.15,
+		depthTest: false, blending: THREE.AdditiveBlending
+	}));
+	halo.scale.set(SUN_RADIUS * 6.0, SUN_RADIUS * 6.0, 1);
+	group.add(halo);
+
+	return { parts: [group], surface, material, radius: SUN_RADIUS };
 }
 
 /**

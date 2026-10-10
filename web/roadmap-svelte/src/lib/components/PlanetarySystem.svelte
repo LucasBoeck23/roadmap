@@ -1,6 +1,10 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
 	import * as THREE from 'three';
+	import { EffectComposer }   from 'three/examples/jsm/postprocessing/EffectComposer.js';
+	import { RenderPass }       from 'three/examples/jsm/postprocessing/RenderPass.js';
+	import { UnrealBloomPass }  from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+	import { OutputPass }       from 'three/examples/jsm/postprocessing/OutputPass.js';
 	import { OrbitalCamera } from '$lib/planetarium/camera.js';
 	import { SolarSystem }   from '$lib/planetarium/scene.js';
 
@@ -10,6 +14,7 @@
 	let containerEl = $state(null);
 	let canvasEl    = $state(null);
 	let renderer, scene, orbitalCam, solar, animId;
+	let composer, bloomPass;
 	let clock = new THREE.Clock();
 	let raycaster = new THREE.Raycaster();
 	let mouseVec  = new THREE.Vector2();
@@ -22,21 +27,32 @@
 		renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: true });
 		renderer.setSize(w, h, false);
 		renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-		renderer.setClearColor(0x00000c);
+		renderer.setClearColor(0x000000);
 		renderer.shadowMap.enabled = true;
 		renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 		scene = new THREE.Scene();
+		scene.background = new THREE.Color(0x000000); // fundo preto garantido
 		orbitalCam = new OrbitalCamera(w / h);
 
-		scene.add(new THREE.AmbientLight(0x334466, 1.2));
-		const starLight = new THREE.PointLight(0xfff5e0, 6, 1200, 1.2);
+		scene.add(new THREE.AmbientLight(0x443a33, 1.2));
+		const starLight = new THREE.PointLight(0xffd9a0, 6, 1200, 1.2);
 		starLight.castShadow = false;
 		scene.add(starLight);
 
 		solar = new SolarSystem(scene);
 		solar.starLight = starLight;
 		if (tracks.length) solar.build(tracks);
+
+		// ── Pós-processamento: bloom ──────────────────────────────────────────
+		composer = new EffectComposer(renderer);
+		composer.setSize(w, h);
+		composer.setPixelRatio(Math.min(devicePixelRatio, 2));
+		composer.addPass(new RenderPass(scene, orbitalCam.camera));
+		// strength, radius, threshold — bloom sutil só na auréola, sem estourar o centro
+		bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.35, 0.5, 0.9);
+		composer.addPass(bloomPass);
+		composer.addPass(new OutputPass());
 
 		animate();
 	}
@@ -45,9 +61,9 @@
 		animId = requestAnimationFrame(animate);
 		const dt = clock.getDelta();
 		const t  = clock.getElapsedTime();
-		solar.update(dt, t);        // simulação
+		solar.update(dt, t);        // simulação + ciclo do sol
 		orbitalCam.lerp(dt);        // câmera
-		renderer.render(scene, orbitalCam.camera);
+		composer.render();          // render com bloom
 	}
 
 	// ── Interação ──────────────────────────────────────────────────────────────
@@ -100,8 +116,13 @@
 
 		// Oculta o resto do sistema e fixa o planeta no centro (0,0,0)
 		solar.enterFocus(id);
-		// Câmera foca no centro, onde o planeta agora está
-		orbitalCam.focusOn(new THREE.Vector3(0, 0, 0), 70);
+
+		const extent  = solar.moonsExtent(id);        // maior raio de lua
+		const MIN_D   = 55;                            // planeta sem/poucas luas
+		const MAX_D   = 200;                           // teto para não afastar demais
+		const dist    = Math.max(MIN_D, Math.min(MAX_D, extent * 1.8 + 30));
+
+		orbitalCam.focusOn(new THREE.Vector3(0, 0, 0), dist);
 		setTimeout(() => solar.buildMoons(id), 200);
 	}
 
@@ -118,6 +139,8 @@
 				const { width, height } = contentRect;
 				if (!width || !height) return;
 				renderer.setSize(width, height, false);
+				composer?.setSize(width, height);
+				bloomPass?.setSize(width, height);
 				orbitalCam.setAspect(width / height);
 			}
 		});
@@ -137,6 +160,7 @@
 	onDestroy(() => {
 		cancelAnimationFrame(animId);
 		resizeObserver?.disconnect();
+		composer?.dispose?.();
 		renderer?.dispose();
 	});
 </script>
@@ -158,6 +182,6 @@
 		font-family:'JetBrains Mono',monospace; font-size:11px;
 		color:rgba(150,170,210,0.45); pointer-events:none; white-space:nowrap;
 	">
-		arrastar → orbitar &nbsp;·&nbsp; shift+arrastar → pan &nbsp;·&nbsp; scroll → zoom &nbsp;·&nbsp; clique → selecionar
+		arrastar → orbitar ; scroll → zoom ; clique → selecionar
 	</div>
 </div>
