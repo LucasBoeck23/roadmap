@@ -19,6 +19,28 @@
 	// 'ide' | 'planet'
 	let viewMode = $state('ide');
 
+	// ── Easter egg: planetário escondido ───────────────────────────────────────
+	// O planetário só fica acessível depois de descobrir o "lugar secreto":
+	// clicar 5x no ícone 🌿 da status bar. A descoberta persiste no localStorage.
+	const UNLOCK_KEY = 'roadmap.planetUnlocked';
+	let planetUnlocked = $state(false);
+	let secretClicks   = 0;
+	let secretTimer    = null;
+
+	function pokeSecret() {
+		secretClicks++;
+		clearTimeout(secretTimer);
+		// reseta a contagem se demorar demais entre cliques
+		secretTimer = setTimeout(() => { secretClicks = 0; }, 1200);
+		if (secretClicks >= 5) {
+			secretClicks = 0;
+			if (!planetUnlocked) {
+				planetUnlocked = true;
+				try { localStorage.setItem(UNLOCK_KEY, '1'); } catch {}
+			}
+		}
+	}
+
 	// ── Estado compartilhado ──────────────────────────────────────────────────
 	let tracks        = $state([]);
 	let activeTrackId = $state(null);
@@ -54,6 +76,8 @@
 
 	// ── Init ──────────────────────────────────────────────────────────────────
 	onMount(async () => {
+		try { planetUnlocked = localStorage.getItem(UNLOCK_KEY) === '1'; } catch {}
+
 		tracks = await getTrackList();
 		if (tracks.length > 0) {
 			activeTrackId = tracks[0].id;
@@ -99,6 +123,7 @@
 
 	// ── Alternância de view ───────────────────────────────────────────────────
 	function toggleView() {
+		if (!planetUnlocked) return; // planetário continua escondido até descobrir
 		viewMode = viewMode === 'ide' ? 'planet' : 'ide';
 		if (viewMode === 'planet') closeTopicPanel();
 	}
@@ -250,6 +275,7 @@
 <!-- ═══════════════════════════════════════════════
      BOTÃO TOGGLE (fixo, sempre visível)
 ═══════════════════════════════════════════════ -->
+{#if planetUnlocked}
 <button
 	class="view-toggle"
 	class:planet-active={viewMode === 'planet'}
@@ -259,6 +285,7 @@
 >
 	{viewMode === 'ide' ? '🪐' : '💻'}
 </button>
+{/if}
 
 <!-- ═══════════════════════════════════════════════
      VIEW: IDE
@@ -420,10 +447,24 @@
 	</div>
 
 	<div class="status-bar">
-		<span>🌿 {activeTrack?.nome ?? '...'}</span>
+		<!-- Lugar secreto: 5 cliques no 🌿 desbloqueiam o planetário -->
+		<span
+			class="status-secret"
+			role="button"
+			tabindex="0"
+			title={activeTrack?.nome ?? ''}
+			onclick={pokeSecret}
+			onkeydown={e => e.key === 'Enter' && pokeSecret()}
+		>🌿 {activeTrack?.nome ?? '...'}</span>
 		<span>{activeTopics.length} tópicos</span>
 		{#if openTabs.length > 0}
 			<span>{openTabs.length} aberto{openTabs.length !== 1 ? 's' : ''}</span>
+		{/if}
+		{#if planetUnlocked}
+			<span class="status-unlock" onclick={() => viewMode = 'planet'} role="button" tabindex="0"
+				onkeydown={e => e.key === 'Enter' && (viewMode = 'planet')}>
+				✦ planetário
+			</span>
 		{/if}
 		<span class="status-right">Roadmap</span>
 	</div>

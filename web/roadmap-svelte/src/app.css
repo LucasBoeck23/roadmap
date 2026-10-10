@@ -680,6 +680,23 @@ html, body {
     margin-left: auto;
 }
 
+/* Lugar secreto — não dá nenhuma dica visual de que é clicável */
+.status-secret {
+    cursor: default;
+    user-select: none;
+}
+
+/* Atalho que aparece após desbloquear o planetário */
+.status-unlock {
+    cursor: pointer;
+    color: #ffe9b0;
+    letter-spacing: 0.5px;
+    transition: opacity 0.15s;
+}
+.status-unlock:hover {
+    opacity: 0.75;
+}
+
 /* Empty editor */
 .empty-editor {
     padding: 24px 32px;
