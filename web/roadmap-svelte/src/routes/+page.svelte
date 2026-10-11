@@ -436,10 +436,12 @@
 							<span class="shortcut-key">click</span>
 							<span>Abrir tópico</span>
 						</div>
-						<div class="shortcut-item">
-							<span class="shortcut-key">🪐</span>
-							<span>Ver como planetário</span>
-						</div>
+						{#if planetUnlocked}
+							<div class="shortcut-item">
+								<span class="shortcut-key">🪐</span>
+								<span>Ver como planetário</span>
+							</div>
+						{/if}
 					</div>
 				</div>
 			{/if}
