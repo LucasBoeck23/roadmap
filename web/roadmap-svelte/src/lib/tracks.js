@@ -17,16 +17,6 @@ export function trackInfoFromId(id, totalTopicos) {
 	return { id, totalTopicos, ...meta };
 }
 
-export function nivelLabel(nivel) {
-	const labels = {
-		trainee: '🟢 Trainee',
-		junior:  '🔵 Júnior',
-		pleno:   '🟡 Pleno',
-		senior:  '🔴 Sênior'
-	};
-	return labels[nivel] ?? nivel;
-}
-
 export function statusLabel(status) {
 	const labels = {
 		'nao-iniciado': '⬜ Não iniciado',

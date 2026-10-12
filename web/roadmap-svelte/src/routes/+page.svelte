@@ -1,765 +1,542 @@
 <script>
-	import { onMount }    from 'svelte';
-	import { gsap }       from 'gsap';
-	import { marked }     from 'marked';
-	import Prism          from 'prismjs';
+	// ─────────────────────────────────────────────────────────────────────────
+	//  Home — vitrine do roadmap (visual "premium" / liquid glass)
+	//  Resume as stacks e tópicos; abre cada tópico num painel com README +
+	//  código real. Dados vêm de topics.json (gerado a partir de /src).
+	// ─────────────────────────────────────────────────────────────────────────
+	import { onMount } from 'svelte';
+	import { marked }  from 'marked';
+	import Prism       from 'prismjs';
 	import 'prismjs/components/prism-csharp';
 	import 'prismjs/components/prism-dart';
-	import { base }            from '$app/paths';
+	import { base }    from '$app/paths';
 	import { getTrackList, getTopicsByTrack, getReadme, getFile } from '$lib/topicService.js';
-	import { nivelLabel }      from '$lib/tracks.js';
-	import { PLANET_COLORS }   from '$lib/planetarium/constants.js';
-	import { pctFromDrag, resolveSplit, SPLIT_DEFAULT } from '$lib/splitController.js';
-	import PlanetarySystem     from '$lib/components/PlanetarySystem.svelte';
 
-	// Cores dos planetas em CSS (mesma paleta do 3D) para o HUD
-	const PLANET_HUD_COLORS = PLANET_COLORS.map(c => '#' + c.toString(16).padStart(6, '0'));
+	// Metadados visuais extras por track (blurb + cores do visual premium)
+	const TRACK_SKIN = {
+		csharp:  { cor: '#8b5cf6', blurb: 'Backend robusto, APIs e os fundamentos da linguagem.' },
+		flutter: { cor: '#38bdf8', blurb: 'Apps multiplataforma bonitos e performáticos.' }
+	};
+	function skin(id) { return TRACK_SKIN[id] ?? { cor: '#7fb0e6', blurb: '' }; }
 
-	// ── View mode ─────────────────────────────────────────────────────────────
-	// 'ide' | 'planet'
-	let viewMode = $state('ide');
+	const STATUS = {
+		'nao-iniciado': { label: 'Não iniciado', cor: '#64748b' },
+		'em-progresso': { label: 'Estudando',    cor: '#38bdf8' },
+		'concluido':    { label: 'Concluído',    cor: '#4ade80' }
+	};
 
-	// ── Easter egg: planetário escondido ───────────────────────────────────────
-	// O planetário só fica acessível depois de descobrir o "lugar secreto":
-	// clicar 5x no ícone 🌿 da status bar. A descoberta persiste no localStorage.
-	const UNLOCK_KEY = 'roadmap.planetUnlocked';
-	let planetUnlocked = $state(false);
-	let secretClicks   = 0;
-	let secretTimer    = null;
+	// ── Dados reais ────────────────────────────────────────────────────────────
+	let tracks = $state([]);              // [{ id, nome, cor, blurb, topics:[...] }]
+	let loaded = $state(false);
 
-	function pokeSecret() {
-		secretClicks++;
-		clearTimeout(secretTimer);
-		// reseta a contagem se demorar demais entre cliques
-		secretTimer = setTimeout(() => { secretClicks = 0; }, 1200);
-		if (secretClicks >= 5) {
-			secretClicks = 0;
-			if (!planetUnlocked) {
-				planetUnlocked = true;
-				try { localStorage.setItem(UNLOCK_KEY, '1'); } catch {}
-			}
-		}
-	}
+	// ── Progresso global (derivado dos dados reais) ─────────────────────────────
+	let allTopics   = $derived(tracks.flatMap(t => t.topics));
+	let total       = $derived(allTopics.length);
+	let concluidos  = $derived(allTopics.filter(t => t.status === 'concluido').length);
+	let emProgresso = $derived(allTopics.filter(t => t.status === 'em-progresso').length);
+	let pct         = $derived(total ? Math.round(((concluidos + emProgresso * 0.5) / total) * 100) : 0);
 
-	// ── Estado compartilhado ──────────────────────────────────────────────────
-	let tracks        = $state([]);
+	// ── Estado de navegação ──────────────────────────────────────────────────
 	let activeTrackId = $state(null);
-	let activeTopics  = $state([]);
+	let activeTrack   = $derived(tracks.find(t => t.id === activeTrackId) ?? null);
+	let selected      = $state(null);        // tópico aberto no painel
 
+	// ── Painel: README + viewer de código ──────────────────────────────────────
+	let readmeHtml   = $state('');
+	let activeFile   = $state(null);
+	let fileContent  = $state('');
+	let copied       = $state(false);
 	const readmeCache  = new Map();
 	const contentCache = new Map();
 
-	// ── Estado — IDE ──────────────────────────────────────────────────────────
-	let openTabs       = $state([]);
-	let activeTabId    = $state(null);
-	let activeTab      = $derived(openTabs.find(t => t.id === activeTabId) ?? null);
-	let readmeHtml     = $state('');
-	let rightTabs      = $state([]);
-	let activeRightTab = $state(null);
-	let rightContent   = $state('');
-	let rightLineCount = $state(0);
-
-	// ── Split view (painel esquerdo | resizer | painel direito) ───────────────
-	// `splitPct` guarda a % do painel esquerdo QUANDO o direito está aberto.
-	// A largura real é derivada de resolveSplit → fecha o direito e volta a 100%.
-	let splitPct   = $state(SPLIT_DEFAULT);
-	let splitViewEl = $state(null);
-	let split      = $derived(resolveSplit(rightTabs.length > 0, splitPct));
-
-	// ── Estado — Planetário ───────────────────────────────────────────────────
-	let planetaryRef     = $state(null);
-	let planetTracks     = $state([]); // tracks enriquecidas com _topics
-	let selectedTopic    = $state(null);
-	let topicReadmeHtml  = $state('');
-	let topicPanelEl     = $state(null);
-	let topicPanelOpen   = $state(false);
-
-	// ── Init ──────────────────────────────────────────────────────────────────
-	onMount(async () => {
-		try { planetUnlocked = localStorage.getItem(UNLOCK_KEY) === '1'; } catch {}
-
-		tracks = await getTrackList();
-		if (tracks.length > 0) {
-			activeTrackId = tracks[0].id;
-			activeTopics  = await getTopicsByTrack(tracks[0].id);
-		}
-		// Pré-carrega tópicos de todas as tracks pro planetário
-		loadPlanetTopics();
-	});
-
-	// ── Resizer reativo do split ───────────────────────────────────────────────
-	let dragging = false;
-	let dragStartPct = 0;
-	let dragStartX = 0;
-
-	function onResizerDown(e) {
-		dragging = true;
-		dragStartPct = splitPct;
-		dragStartX = e.clientX;
-		window.addEventListener('pointermove', onResizerMove);
-		window.addEventListener('pointerup', onResizerUp);
-		e.preventDefault();
-	}
-	function onResizerMove(e) {
-		if (!dragging || !splitViewEl) return;
-		const total = splitViewEl.getBoundingClientRect().width;
-		splitPct = pctFromDrag(dragStartPct, e.clientX - dragStartX, total);
-	}
-	function onResizerUp() {
-		dragging = false;
-		window.removeEventListener('pointermove', onResizerMove);
-		window.removeEventListener('pointerup', onResizerUp);
-	}
-
-	async function loadPlanetTopics() {
-		const enriched = await Promise.all(
-			tracks.map(async t => {
-				const topics = await getTopicsByTrack(t.id);
-				return { ...t, _topics: topics };
-			})
-		);
-		planetTracks = enriched;
-	}
-
-	// ── Alternância de view ───────────────────────────────────────────────────
-	function toggleView() {
-		if (!planetUnlocked) return; // planetário continua escondido até descobrir
-		viewMode = viewMode === 'ide' ? 'planet' : 'ide';
-		if (viewMode === 'planet') closeTopicPanel();
-	}
-
-	// ── IDE — Track ───────────────────────────────────────────────────────────
-	async function switchTrack(trackId) {
-		if (activeTrackId === trackId) return;
-		activeTrackId = trackId;
-		openTabs = []; activeTabId = null; readmeHtml = '';
-		rightTabs = []; activeRightTab = null; rightContent = '';
-		activeTopics = await getTopicsByTrack(trackId);
-	}
-
-	// ── IDE — Tabs ────────────────────────────────────────────────────────────
-	async function openTopic(topic) {
-		if (!openTabs.find(t => t.id === topic.id)) openTabs = [...openTabs, topic];
-		await activateTab(topic.id);
-	}
-
-	async function activateTab(id) {
-		activeTabId = id;
-		rightTabs = []; activeRightTab = null; rightContent = '';
-		const topic = openTabs.find(t => t.id === id);
-		if (!topic) return;
-		if (readmeCache.has(id)) {
-			readmeHtml = readmeCache.get(id);
-		} else {
-			const md   = await getReadme(topic.pasta);
-			const html = md ? marked.parse(md) : '<p style="color:var(--text-muted)">Sem README ainda.</p>';
-			readmeCache.set(id, html);
-			readmeHtml = html;
-		}
-	}
-
-	function closeTab(id, e) {
-		e.stopPropagation();
-		openTabs = openTabs.filter(t => t.id !== id);
-		if (activeTabId === id) {
-			const last = openTabs.at(-1);
-			activeTabId = last?.id ?? null;
-			readmeHtml = '';
-			if (last) activateTab(last.id);
-		}
-	}
-
-	// ── IDE — Painel direito ──────────────────────────────────────────────────
-	async function openFileInRight(filePath) {
-		if (!activeTab) return;
-		const wasEmpty = rightTabs.length === 0;
-		if (!rightTabs.includes(filePath)) rightTabs = [...rightTabs, filePath];
-		if (wasEmpty) splitPct = SPLIT_DEFAULT; // abre sempre no tamanho padrão
-		await activateRightTab(filePath);
-	}
-
-	async function activateRightTab(filePath) {
-		activeRightTab = filePath;
-		const key = `${activeTab?.id}::${filePath}`;
-		if (contentCache.has(key)) { applyRightContent(contentCache.get(key)); return; }
-		const raw = await getFile(activeTab.pasta, filePath);
-		const content = raw ?? '// Arquivo não encontrado';
-		contentCache.set(key, content);
-		applyRightContent(content);
-	}
-
-	function applyRightContent(content) {
-		rightContent = content;
-		rightLineCount = content.split('\n').length;
-	}
-
-	// HTML já destacado pelo Prism, recalculado sempre que o conteúdo ou o
-	// arquivo ativo mudam. Usar Prism.highlight() (retorna string) em vez de
-	// highlightElement() (muta o DOM) evita o conflito com o Svelte que fazia
-	// o painel ficar preso no primeiro arquivo aberto.
-	let rightHtml = $derived.by(() => {
-		if (!activeRightTab) return '';
-		const lang = activeRightTab.endsWith('.dart') ? 'dart' : 'csharp';
+	let codeHtml = $derived.by(() => {
+		if (!activeFile) return '';
+		const lang = activeFile.endsWith('.dart') ? 'dart' : 'csharp';
 		const grammar = Prism.languages[lang] ?? Prism.languages.clike;
-		return Prism.highlight(rightContent, grammar, lang);
+		return Prism.highlight(fileContent, grammar, lang);
 	});
 
-	function closeRightTab(filePath, e) {
-		e.stopPropagation();
-		rightTabs = rightTabs.filter(f => f !== filePath);
-		if (activeRightTab === filePath) {
-			const last = rightTabs.at(-1) ?? null;
-			activeRightTab = last;
-			if (last) activateRightTab(last);
-			else { rightContent = ''; rightLineCount = 0; }
-		}
-	}
+	function fileName(path) { return path.split('/').pop() ?? path; }
 
-	function clearRightPanel() {
-		rightTabs = []; activeRightTab = null; rightContent = ''; rightLineCount = 0;
-	}
+	async function openTopic(topic) {
+		selected = topic;
+		readmeHtml = '';
+		activeFile = null;
+		fileContent = '';
 
-	// ── Planetário — painel de tópico ─────────────────────────────────────────
-	async function handleTopicSelect(topic) {
-		selectedTopic = topic;
-		topicReadmeHtml = '';
-
+		// README
 		const md = readmeCache.has(topic.id)
 			? readmeCache.get(topic.id)
 			: await getReadme(topic.pasta);
 		readmeCache.set(topic.id, md);
-
-		topicReadmeHtml = md
+		readmeHtml = md
 			? marked.parse(md)
-			: '<p style="opacity:0.6; font-style:italic;">Sem conteúdo ainda para este tópico.</p>';
+			: '<p style="opacity:.6;font-style:italic">Sem conteúdo ainda para este tópico.</p>';
 
-		openTopicPanel();
+		// primeiro arquivo
+		const primeiro = topic.arquivos?.[0] ?? null;
+		if (primeiro) await selectFile(primeiro);
 	}
 
-	function openTopicPanel() {
-		topicPanelOpen = true;
-		setTimeout(() => {
-			if (!topicPanelEl) return;
-			gsap.fromTo(topicPanelEl,
-				{ x: 420, opacity: 0 },
-				{ x: 0, opacity: 1, duration: 0.4, ease: 'power3.out' }
-			);
-		}, 10);
+	async function selectFile(filePath) {
+		activeFile = filePath;
+		const key = `${selected?.id}::${filePath}`;
+		if (contentCache.has(key)) { fileContent = contentCache.get(key); return; }
+		const raw = await getFile(selected.pasta, filePath);
+		const content = raw ?? '// Arquivo não encontrado';
+		contentCache.set(key, content);
+		fileContent = content;
 	}
 
-	function closeTopicPanel() {
-		if (!topicPanelEl) { topicPanelOpen = false; selectedTopic = null; return; }
-		gsap.to(topicPanelEl, {
-			x: 420, opacity: 0, duration: 0.3, ease: 'power2.in',
-			onComplete: () => { topicPanelOpen = false; selectedTopic = null; }
-		});
+	async function copyCode() {
+		try {
+			await navigator.clipboard.writeText(fileContent);
+			copied = true;
+			setTimeout(() => { copied = false; }, 1600);
+		} catch {}
 	}
 
-	// ── Helpers IDE ───────────────────────────────────────────────────────────
-	function fileName(path) { return path.split('/').pop() ?? path; }
-	function langClass(path) {
-		if (!path) return 'language-plaintext';
-		if (path.endsWith('.cs'))   return 'language-csharp';
-		if (path.endsWith('.dart')) return 'language-dart';
-		return 'language-plaintext';
-	}
-	function topicIcon(status) {
-		if (status === 'concluido')    return '✅';
-		if (status === 'em-progresso') return '🔄';
-		return '📁';
+	function closePanel() { selected = null; activeFile = null; fileContent = ''; }
+
+	// ── Spotlight que segue o mouse (efeito premium) ───────────────────────────
+	let mx = $state(50), my = $state(30);
+	function onMove(e) {
+		mx = (e.clientX / window.innerWidth) * 100;
+		my = (e.clientY / window.innerHeight) * 100;
 	}
 
-	let activeTrack = $derived(tracks.find(t => t.id === activeTrackId) ?? null);
+	// animação de contagem do número de progresso
+	let shownPct = $state(0);
+	function animatePct() {
+		const t0 = performance.now();
+		const dur = 1100;
+		const target = pct;
+		function tick(now) {
+			const k = Math.min(1, (now - t0) / dur);
+			const ease = 1 - Math.pow(1 - k, 3);
+			shownPct = Math.round(target * ease);
+			if (k < 1) requestAnimationFrame(tick);
+		}
+		requestAnimationFrame(tick);
+	}
+
+	onMount(async () => {
+		const list = await getTrackList();
+		const enriched = await Promise.all(
+			list.map(async t => {
+				const topics = await getTopicsByTrack(t.id);
+				return { ...t, ...skin(t.id), topics };
+			})
+		);
+		tracks = enriched;
+		activeTrackId = enriched[0]?.id ?? null;
+		loaded = true;
+		animatePct();
+	});
 </script>
 
-<!-- ═══════════════════════════════════════════════
-     BOTÃO TOGGLE (fixo, sempre visível)
-═══════════════════════════════════════════════ -->
-{#if planetUnlocked}
-<button
-	class="view-toggle"
-	class:planet-active={viewMode === 'planet'}
-	onclick={toggleView}
-	title={viewMode === 'ide' ? 'Ver como Planetário' : 'Ver como IDE'}
-	aria-label="Alternar visualização"
->
-	{viewMode === 'ide' ? '🪐' : '💻'}
-</button>
-{/if}
+<svelte:window onmousemove={onMove} />
 
-<!-- ═══════════════════════════════════════════════
-     VIEW: IDE
-═══════════════════════════════════════════════ -->
-{#if viewMode === 'ide'}
-<div class="ide-layout">
+<div class="stage" style="--mx:{mx}%; --my:{my}%;">
+	<!-- camadas de fundo -->
+	<div class="aurora a1"></div>
+	<div class="aurora a2"></div>
+	<div class="aurora a3"></div>
+	<div class="grain"></div>
 
-	<div class="activity-bar">
-		{#each tracks as track}
-			<div
-				class="activity-icon"
-				class:activity-active={activeTrackId === track.id}
-				title={track.nome}
-				role="button" tabindex="0"
-				onclick={() => switchTrack(track.id)}
-				onkeydown={e => e.key === 'Enter' && switchTrack(track.id)}
-			>
-				<img src={track.icone} alt={track.nome} />
+	<main class="shell">
+		<!-- ── HERO ───────────────────────────────────────────────── -->
+		<header class="hero">
+			<div class="hero-text">
+				<span class="eyebrow">PORTFÓLIO · ROADMAP VIVO</span>
+				<h1>
+					Roadmap de estudos<br />
+					do <span class="grad">Lucas Boeck</span>
+				</h1>
+				<p class="lead">
+					Cada tópico é um projeto real — código comentado, README e download.
+					Explore as stacks e acompanhe a evolução.
+				</p>
 			</div>
-		{/each}
-	</div>
 
-	<div class="sidebar">
-		<div class="sidebar-header">EXPLORER</div>
-		<div class="tree-view">
-			{#if activeTrack}
-				<div class="tree-section-title">{activeTrack.nome}</div>
-				{#each activeTopics as topic}
-					<div
-						class="tree-item"
-						class:tree-selected={activeTabId === topic.id}
-						role="button" tabindex="0"
+			<div class="progress-card glass">
+				<div class="progress-head">
+					<span>Progresso geral</span>
+					<span class="progress-pct">{shownPct}%</span>
+				</div>
+				<div class="progress-track">
+					<div class="progress-fill" style="width:{shownPct}%"></div>
+				</div>
+				<div class="progress-meta">
+					<span><b>{concluidos}</b> concluídos</span>
+					<span><b>{emProgresso}</b> estudando</span>
+					<span><b>{total}</b> no total</span>
+				</div>
+			</div>
+		</header>
+
+		<!-- ── SELETOR DE STACK ───────────────────────────────────── -->
+		<nav class="tracks-nav">
+			{#each tracks as t}
+				<button
+					class="track-pill glass"
+					class:active={t.id === activeTrackId}
+					style="--tc:{t.cor};"
+					onclick={() => (activeTrackId = t.id)}
+				>
+					<span class="dot"></span>
+					{t.nome}
+				</button>
+			{/each}
+		</nav>
+
+		<!-- ── GRID DE TÓPICOS ────────────────────────────────────── -->
+		{#if activeTrack}
+		{#key activeTrackId}
+		<section class="grid">
+			<div class="track-blurb">
+				<h2 style="--tc:{activeTrack.cor}">{activeTrack.nome}</h2>
+				<p>{activeTrack.blurb}</p>
+			</div>
+
+			<div class="cards">
+				{#each activeTrack.topics as topic, i}
+					<button
+						class="card glass"
+						style="--tc:{activeTrack.cor}; --d:{i * 70}ms"
 						onclick={() => openTopic(topic)}
-						onkeydown={e => e.key === 'Enter' && openTopic(topic)}
 					>
-						<span class="tree-icon">{topicIcon(topic.status)}</span>
-						<span class="tree-label" title={topic.nome}>{topic.nome}</span>
-					</div>
-				{/each}
-			{/if}
-		</div>
-	</div>
-
-	<div class="editor-main">
-		{#if openTabs.length > 0}
-			<div class="editor-tabs">
-				{#each openTabs as tab}
-					<div
-						class="editor-tab"
-						class:editor-tab-active={activeTabId === tab.id}
-						role="button" tabindex="0"
-						onclick={() => activateTab(tab.id)}
-						onkeydown={e => e.key === 'Enter' && activateTab(tab.id)}
-					>
-						<span class="editor-tab-icon">📄</span>
-						<span class="editor-tab-name" title={tab.nome}>{tab.nome}</span>
-						<span
-							class="editor-tab-close" role="button" tabindex="0"
-							onclick={e => closeTab(tab.id, e)}
-							onkeydown={e => e.key === 'Enter' && closeTab(tab.id, e)}
-						>✕</span>
-					</div>
+						<div class="card-sheen"></div>
+						<div class="card-top">
+							<span class="status" style="--sc:{STATUS[topic.status]?.cor ?? '#64748b'}">
+								<span class="status-dot"></span>{STATUS[topic.status]?.label ?? topic.status}
+							</span>
+						</div>
+						<h3>{topic.nome}</h3>
+						<div class="card-foot">
+							{#if topic.arquivos?.length}
+								<span>{topic.arquivos.length} arquivo{topic.arquivos.length !== 1 ? 's' : ''}</span>
+							{:else}
+								<span class="muted">em breve</span>
+							{/if}
+							<span class="arrow">→</span>
+						</div>
+					</button>
 				{/each}
 			</div>
+		</section>
+		{/key}
 		{/if}
 
-		<div class="editor-content">
-			{#if activeTab}
-				<div class="split-view" bind:this={splitViewEl}>
-					<div class="split-left" style="flex: 0 0 {split.leftPct}%; width: {split.leftPct}%;">
-						<div class="doc-view">
-							<div class="doc-readme markdown-body">{@html readmeHtml}</div>
-							{#if activeTab.download}
-								<a class="ide-download" href="{base}/{activeTab.download}" download>
-									⬇ Baixar projeto (.zip)
-								</a>
-							{/if}
-							{#if activeTab.arquivos.length > 0}
-								<div class="doc-tree">
-									<div class="doc-tree-title">📂 Arquivos</div>
-									<div class="doc-tree-content">
-										{#each activeTab.arquivos as file}
-											<div
-												class="tree-file-link" role="button" tabindex="0"
-												onclick={() => openFileInRight(file)}
-												onkeydown={e => e.key === 'Enter' && openFileInRight(file)}
-											>📄 {file}</div>
-										{/each}
-									</div>
-								</div>
-							{/if}
-						</div>
+		<div class="explore-cta">
+			<a class="planet-link" href="{base}/planetario">Explorar o planetário 🪐</a>
+		</div>
+
+		<footer class="foot">
+			<span>Desenvolvido por Lucas Boeck</span>
+		</footer>
+	</main>
+
+	<!-- ── PAINEL DE TÓPICO (overlay liquid glass) ──────────────── -->
+	{#if selected}
+		<div class="overlay" onclick={closePanel}
+			onkeydown={(e) => e.key === 'Escape' && closePanel()}
+			role="button" tabindex="-1" aria-label="Fechar painel">
+			<div class="panel glass" onclick={(e) => e.stopPropagation()}
+				onkeydown={(e) => e.stopPropagation()}
+				role="dialog" aria-modal="true" tabindex="-1">
+				<header class="panel-head">
+					<div>
+						<span class="badge" style="--bc:{STATUS[selected.status]?.cor ?? '#64748b'}">{STATUS[selected.status]?.label ?? selected.status}</span>
+						<h2>{selected.nome}</h2>
 					</div>
-					{#if rightTabs.length > 0}
-						<div
-							class="split-resizer"
-							class:active={dragging}
-							role="separator"
-							aria-orientation="vertical"
-							tabindex="-1"
-							onpointerdown={onResizerDown}
-						></div>
-						<div class="split-right" style="flex: 1 1 0; min-width: 0;">
-							<div class="right-tabs">
-								{#each rightTabs as file}
-									<div
-										class="right-tab"
-										class:right-tab-active={activeRightTab === file}
-										role="button" tabindex="0"
-										onclick={() => activateRightTab(file)}
-										onkeydown={e => e.key === 'Enter' && activateRightTab(file)}
-									>
-										<span>📄 {fileName(file)}</span>
-										<span
-											class="right-tab-close" role="button" tabindex="0"
-											onclick={e => closeRightTab(file, e)}
-											onkeydown={e => e.key === 'Enter' && closeRightTab(file, e)}
-										>✕</span>
-									</div>
+					<button class="close" onclick={closePanel} aria-label="Fechar">✕</button>
+				</header>
+
+				<div class="panel-body">
+					<article class="readme markdown-body">
+						{@html readmeHtml}
+					</article>
+
+					{#if selected.arquivos?.length}
+						<div class="code-block">
+							<div class="file-tabs">
+								{#each selected.arquivos as f}
+									<button class="file-tab" class:active={f === activeFile}
+										onclick={() => selectFile(f)}>{fileName(f)}</button>
 								{/each}
 							</div>
-							{#if activeRightTab}
-								<div class="breadcrumb">
-									<span
-										class="breadcrumb-back" role="button" tabindex="0"
-										onclick={clearRightPanel}
-										onkeydown={e => e.key === 'Enter' && clearRightPanel()}
-									>← fechar</span>
-									<span class="breadcrumb-sep">/</span>
-									<span class="breadcrumb-file">{activeRightTab}</span>
-								</div>
-							{/if}
-							<div class="code-area">
-								<div class="line-numbers" aria-hidden="true">
-									{#each { length: rightLineCount } as _, i}<span>{i + 1}</span>{/each}
-								</div>
-								<pre class="code-text"><code class={langClass(activeRightTab)}>{@html rightHtml}</code></pre>
+							<pre class="code"><code>{@html codeHtml}</code></pre>
+							<div class="code-actions">
+								<button class="ghost-btn" onclick={copyCode}>{copied ? '✓ Copiado' : 'Copiar código'}</button>
+								{#if selected.download}
+									<a class="ghost-btn" href="{base}/{selected.download}" download>⬇ Baixar projeto (.zip)</a>
+								{/if}
 							</div>
 						</div>
-					{/if}
-				</div>
-			{:else}
-				<div class="welcome">
-					<div class="welcome-title">Roadmap</div>
-					<div class="welcome-sub">Selecione um tópico na sidebar para começar</div>
-					<div class="welcome-shortcuts">
-						<div class="shortcut-item">
-							<span class="shortcut-key">click</span>
-							<span>Abrir tópico</span>
+					{:else}
+						<div class="empty">
+							<span>🚧</span>
+							<p>Conteúdo em breve. Este tópico ainda está no forno.</p>
 						</div>
-						{#if planetUnlocked}
-							<div class="shortcut-item">
-								<span class="shortcut-key">🪐</span>
-								<span>Ver como planetário</span>
-							</div>
-						{/if}
-					</div>
-				</div>
-			{/if}
-		</div>
-	</div>
-
-	<div class="status-bar">
-		<!-- Lugar secreto: 5 cliques no 🌿 desbloqueiam o planetário -->
-		<span
-			class="status-secret"
-			role="button"
-			tabindex="0"
-			title={activeTrack?.nome ?? ''}
-			onclick={pokeSecret}
-			onkeydown={e => e.key === 'Enter' && pokeSecret()}
-		>🌿 {activeTrack?.nome ?? '...'}</span>
-		<span>{activeTopics.length} tópicos</span>
-		{#if openTabs.length > 0}
-			<span>{openTabs.length} aberto{openTabs.length !== 1 ? 's' : ''}</span>
-		{/if}
-		{#if planetUnlocked}
-			<span class="status-unlock" onclick={() => viewMode = 'planet'} role="button" tabindex="0"
-				onkeydown={e => e.key === 'Enter' && (viewMode = 'planet')}>
-				✦ planetário
-			</span>
-		{/if}
-		<span class="status-right">Roadmap</span>
-	</div>
-
-</div>
-{/if}
-
-<!-- ═══════════════════════════════════════════════
-     VIEW: PLANETÁRIO
-═══════════════════════════════════════════════ -->
-{#if viewMode === 'planet'}
-<div class="planet-view">
-	<PlanetarySystem
-		tracks={planetTracks}
-		onTopicSelect={handleTopicSelect}
-		bind:this={planetaryRef}
-	/>
-
-	<!-- Vinheta cinematográfica -->
-	<div class="planet-vignette"></div>
-
-	<!-- HUD: título no canto superior esquerdo -->
-	<div class="hud-title">
-		<div class="hud-title-main">ROADMAP</div>
-		<div class="hud-title-sub">sistema de estudos · {planetTracks.length} trilhas</div>
-	</div>
-
-	<!-- HUD: legenda das tracks no canto superior direito -->
-	<div class="hud-legend">
-		{#each planetTracks as track, i}
-			{@const total = track._topics?.length ?? 0}
-			{@const done = track._topics?.filter(t => t.status === 'concluido').length ?? 0}
-			<div class="hud-legend-row">
-				<span class="hud-dot" style="background:{PLANET_HUD_COLORS[i % PLANET_HUD_COLORS.length]}"></span>
-				<span class="hud-legend-name">{track.nome}</span>
-				<span class="hud-legend-count">{done}/{total}</span>
-			</div>
-		{/each}
-	</div>
-
-	<!-- Hint de controles -->
-	<div class="planet-hint">
-		scroll para zoom · arrastar para navegar · clique num planeta
-	</div>
-
-	<!-- Painel lateral do tópico selecionado -->
-	{#if topicPanelOpen}
-		<div class="topic-panel" bind:this={topicPanelEl}>
-			<div class="topic-panel-header">
-				<div>
-					<div class="topic-panel-title">{selectedTopic?.nome ?? ''}</div>
-					{#if selectedTopic?.nivel}
-						<div class="topic-panel-level">{nivelLabel(selectedTopic.nivel)}</div>
 					{/if}
-				</div>
-				<button class="topic-panel-close" onclick={closeTopicPanel} aria-label="Fechar">✕</button>
-			</div>
-			<div class="topic-panel-content">
-				{#if selectedTopic?.download}
-					<a
-						class="topic-download"
-						href="{base}/{selectedTopic.download}"
-						download
-					>
-						⬇ Baixar projeto (.zip)
-					</a>
-				{/if}
-				<div class="markdown-body">
-					{@html topicReadmeHtml}
 				</div>
 			</div>
 		</div>
 	{/if}
 </div>
-{/if}
 
 <style>
-	/* ── Planetário ──────────────────────────────────────────────────────── */
-	.planet-view {
-		width: 100vw;
-		height: 100vh;
-		background: #000008;
+	:global(body) { margin: 0; }
+
+	.stage {
 		position: relative;
-		overflow: hidden;
+		min-height: 100vh;
+		overflow-x: hidden;
+		background: #06070e;
+		color: #e8ebf5;
+		font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+		-webkit-font-smoothing: antialiased;
 	}
 
-	/* Vinheta cinematográfica — escurece as bordas */
-	.planet-vignette {
-		position: absolute;
+	/* spotlight que segue o mouse */
+	.stage::before {
+		content: '';
+		position: fixed;
 		inset: 0;
 		pointer-events: none;
-		background: radial-gradient(ellipse at center,
-			transparent 55%,
-			rgba(0, 0, 8, 0.35) 85%,
-			rgba(0, 0, 8, 0.7) 100%);
-		z-index: 5;
+		background: radial-gradient(600px circle at var(--mx) var(--my),
+			rgba(139,92,246,.10), transparent 45%);
+		z-index: 1;
+		transition: background .2s ease;
 	}
 
-	/* HUD — título */
-	.hud-title {
-		position: absolute;
-		top: 22px;
-		left: 26px;
-		pointer-events: none;
-		z-index: 10;
-		font-family: 'JetBrains Mono', monospace;
-	}
-	.hud-title-main {
-		font-size: 20px;
-		font-weight: 700;
-		letter-spacing: 6px;
-		color: rgba(220, 232, 245, 0.92);
-		text-shadow: 0 0 20px rgba(120, 170, 255, 0.4);
-	}
-	.hud-title-sub {
-		margin-top: 4px;
-		font-size: 10px;
-		letter-spacing: 1.5px;
-		color: rgba(150, 170, 210, 0.5);
-		text-transform: uppercase;
-	}
-
-	/* HUD — legenda das tracks */
-	.hud-legend {
-		position: absolute;
-		top: 22px;
-		right: 26px;
-		z-index: 10;
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-		padding: 12px 14px;
-		border: 1px solid rgba(90, 120, 170, 0.2);
-		border-radius: 8px;
-		background: rgba(10, 16, 30, 0.5);
-		backdrop-filter: blur(6px);
-		font-family: 'JetBrains Mono', monospace;
-		pointer-events: none;
-	}
-	.hud-legend-row {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		font-size: 11px;
-	}
-	.hud-dot {
-		width: 9px;
-		height: 9px;
-		border-radius: 50%;
-		flex-shrink: 0;
-		box-shadow: 0 0 8px currentColor;
-	}
-	.hud-legend-name {
-		color: rgba(210, 222, 238, 0.85);
-		flex: 1;
-	}
-	.hud-legend-count {
-		color: rgba(150, 170, 210, 0.55);
-		font-size: 10px;
-	}
-
-	.planet-hint {
-		position: absolute;
-		bottom: 16px;
-		left: 50%;
-		transform: translateX(-50%);
-		font-size: 11px;
-		color: rgba(150, 170, 200, 0.5);
-		letter-spacing: 0.5px;
-		pointer-events: none;
-		font-family: 'JetBrains Mono', monospace;
-	}
-
-	/* ── Painel lateral tópico ───────────────────────────────────────────── */
-	.topic-panel {
-		position: absolute;
-		top: 50%;
-		right: 20px;
-		transform: translateY(-50%);
-		z-index: 20;
-		width: 400px;
-		max-height: 80vh;
-		background: rgba(14, 18, 32, 0.95);
-		border: 1px solid rgba(74, 136, 199, 0.3);
-		border-radius: 8px;
-		box-shadow: 0 8px 40px rgba(0, 0, 0, 0.7), 0 0 30px rgba(74, 136, 199, 0.05);
-		display: flex;
-		flex-direction: column;
-		overflow: hidden;
-		backdrop-filter: blur(12px);
-	}
-
-	.topic-panel-header {
-		padding: 14px 16px;
-		border-bottom: 1px solid rgba(74, 136, 199, 0.2);
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		flex-shrink: 0;
-	}
-
-	.topic-panel-title {
-		font-size: 15px;
-		font-weight: 600;
-		color: #e0e8f0;
-		font-family: 'JetBrains Mono', monospace;
-	}
-
-	.topic-panel-level {
-		font-size: 10px;
-		color: rgba(150, 170, 200, 0.5);
-		margin-top: 3px;
-		letter-spacing: 0.5px;
-	}
-
-	.topic-panel-close {
-		background: none;
-		border: 1px solid rgba(74, 136, 199, 0.3);
-		border-radius: 50%;
-		width: 26px;
-		height: 26px;
-		color: rgba(150, 170, 200, 0.7);
-		cursor: pointer;
-		font-size: 11px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		flex-shrink: 0;
-		transition: background 0.15s, color 0.15s;
-	}
-
-	.topic-panel-close:hover {
-		background: rgba(74, 136, 199, 0.15);
-		color: #e0e8f0;
-	}
-
-	.topic-panel-content {
-		flex: 1;
-		overflow-y: auto;
-		padding: 16px 20px 20px;
-		scrollbar-width: thin;
-		scrollbar-color: rgba(74, 136, 199, 0.3) transparent;
-	}
-
-	.topic-download {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		margin-bottom: 16px;
-		padding: 8px 14px;
-		border: 1px solid rgba(74, 136, 199, 0.4);
-		border-radius: 6px;
-		background: rgba(74, 136, 199, 0.12);
-		color: #cfe0f2;
-		font-family: 'JetBrains Mono', monospace;
-		font-size: 12px;
-		text-decoration: none;
-		transition: background 0.15s, border-color 0.15s;
-	}
-	.topic-download:hover {
-		background: rgba(74, 136, 199, 0.25);
-		border-color: rgba(74, 136, 199, 0.7);
-	}
-
-	/* ── Botão toggle ────────────────────────────────────────────────────── */
-	.view-toggle {
+	/* auroras de fundo */
+	.aurora {
 		position: fixed;
-		bottom: 20px;
-		right: 20px;
-		z-index: 200;
-		width: 44px;
-		height: 44px;
 		border-radius: 50%;
-		border: 1px solid rgba(255, 255, 255, 0.15);
-		background: rgba(30, 30, 46, 0.85);
-		backdrop-filter: blur(8px);
-		font-size: 20px;
-		cursor: pointer;
+		filter: blur(120px);
+		opacity: .5;
+		pointer-events: none;
+		z-index: 0;
+		animation: float 18s ease-in-out infinite;
+	}
+	.a1 { width: 560px; height: 560px; top: -140px; left: -120px;
+		background: radial-gradient(circle, #7c3aed, transparent 70%); }
+	.a2 { width: 620px; height: 620px; top: 10%; right: -180px;
+		background: radial-gradient(circle, #0ea5e9, transparent 70%); animation-delay: -6s; }
+	.a3 { width: 520px; height: 520px; bottom: -160px; left: 30%;
+		background: radial-gradient(circle, #db2777, transparent 70%); opacity: .32; animation-delay: -11s; }
+	@keyframes float {
+		0%,100% { transform: translate(0,0) scale(1); }
+		50%     { transform: translate(30px,-40px) scale(1.08); }
+	}
+
+	.grain {
+		position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: .04;
+		background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+	}
+
+	/* vidro base */
+	.glass {
+		background: rgba(255,255,255,.045);
+		border: 1px solid rgba(255,255,255,.09);
+		backdrop-filter: blur(22px) saturate(140%);
+		-webkit-backdrop-filter: blur(22px) saturate(140%);
+		box-shadow: 0 8px 40px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.08);
+	}
+
+	.shell {
+		position: relative;
+		z-index: 2;
+		max-width: 1120px;
+		margin: 0 auto;
+		padding: clamp(48px, 9vh, 120px) 24px 40px;
+		/* ocupa ao menos a tela toda e empurra CTA+rodapé pro fundo */
+		min-height: 100vh;
 		display: flex;
-		align-items: center;
-		justify-content: center;
-		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-		transition: transform 0.15s, box-shadow 0.15s;
-		line-height: 1;
+		flex-direction: column;
 	}
 
-	.view-toggle:hover {
-		transform: scale(1.1);
-		box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+	/* ── HERO ─────────────────────────────────────── */
+	.hero {
+		display: flex;
+		align-items: flex-end;
+		justify-content: space-between;
+		gap: 40px;
+		flex-wrap: wrap;
+	}
+	.hero-text { max-width: 640px; flex: 1 1 420px; }
+	.eyebrow {
+		font-size: .72rem; letter-spacing: .22em; font-weight: 600;
+		color: #a78bfa; opacity: .9;
+	}
+	.hero h1 {
+		font-size: clamp(2.4rem, 6vw, 4.2rem);
+		line-height: 1.04; font-weight: 700; letter-spacing: -.02em;
+		margin: 18px 0 0;
+	}
+	.grad {
+		background: linear-gradient(100deg, #a78bfa, #38bdf8 60%, #f0abfc);
+		-webkit-background-clip: text; background-clip: text; color: transparent;
+	}
+	.lead {
+		margin: 22px 0 0; max-width: 560px;
+		font-size: 1.08rem; line-height: 1.6; color: #aab2c8;
 	}
 
-	.view-toggle.planet-active {
-		background: rgba(30, 50, 80, 0.9);
-		border-color: rgba(74, 136, 199, 0.5);
+	.progress-card { padding: 20px 22px; border-radius: 20px; flex: 0 1 360px; min-width: 300px; }
+	.progress-head { display: flex; justify-content: space-between; align-items: baseline;
+		font-size: .9rem; color: #c3c9db; }
+	.progress-pct { font-size: 1.5rem; font-weight: 700;
+		background: linear-gradient(90deg,#a78bfa,#38bdf8); -webkit-background-clip: text; background-clip: text; color: transparent; }
+	.progress-track { height: 8px; border-radius: 99px; background: rgba(255,255,255,.08);
+		margin: 14px 0 12px; overflow: hidden; }
+	.progress-fill { height: 100%; border-radius: 99px;
+		background: linear-gradient(90deg,#7c3aed,#38bdf8);
+		box-shadow: 0 0 16px rgba(99,102,241,.6); transition: width .1s linear; }
+	.progress-meta { display: flex; gap: 18px; font-size: .82rem; color: #8b93a9; }
+	.progress-meta b { color: #e8ebf5; }
+
+	/* ── TRACKS NAV ───────────────────────────────── */
+	.tracks-nav { display: flex; gap: 12px; margin: 54px 0 28px; flex-wrap: wrap; }
+	.track-pill {
+		display: inline-flex; align-items: center; gap: 10px;
+		padding: 11px 20px; border-radius: 99px; cursor: pointer;
+		color: #cbd2e6; font-size: .95rem; font-weight: 500;
+		transition: transform .25s cubic-bezier(.2,.8,.2,1), border-color .25s, color .25s;
+	}
+	.track-pill .dot { width: 9px; height: 9px; border-radius: 50%;
+		background: var(--tc); box-shadow: 0 0 10px var(--tc); }
+	.track-pill:hover { transform: translateY(-2px); }
+	.track-pill.active {
+		color: #fff;
+		border-color: color-mix(in srgb, var(--tc) 55%, transparent);
+		background: linear-gradient(180deg, color-mix(in srgb, var(--tc) 22%, transparent), rgba(255,255,255,.04));
+		box-shadow: 0 8px 30px color-mix(in srgb, var(--tc) 28%, transparent);
+	}
+
+	/* ── GRID ─────────────────────────────────────── */
+	.track-blurb { margin-bottom: 24px; }
+	.track-blurb h2 { font-size: 1.6rem; font-weight: 650; margin: 0;
+		color: color-mix(in srgb, var(--tc) 75%, #fff); }
+	.track-blurb p { margin: 6px 0 0; color: #9aa2b8; }
+
+	.cards {
+		display: grid; gap: 18px;
+		grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+	}
+	.card {
+		position: relative; overflow: hidden; text-align: left;
+		padding: 22px; border-radius: 22px; cursor: pointer; color: inherit;
+		opacity: 0; transform: translateY(16px);
+		animation: rise .6s cubic-bezier(.2,.8,.2,1) forwards; animation-delay: var(--d);
+		transition: transform .3s cubic-bezier(.2,.8,.2,1), border-color .3s, box-shadow .3s;
+	}
+	@keyframes rise { to { opacity: 1; transform: translateY(0); } }
+	.card:hover {
+		transform: translateY(-6px);
+		border-color: color-mix(in srgb, var(--tc) 50%, transparent);
+		box-shadow: 0 20px 50px rgba(0,0,0,.45), 0 0 0 1px color-mix(in srgb, var(--tc) 30%, transparent);
+	}
+	.card-sheen {
+		position: absolute; inset: 0; pointer-events: none; opacity: 0;
+		background: radial-gradient(400px circle at 50% 0%, color-mix(in srgb, var(--tc) 18%, transparent), transparent 60%);
+		transition: opacity .3s;
+	}
+	.card:hover .card-sheen { opacity: 1; }
+	.card-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+	.badge {
+		font-size: .7rem; font-weight: 600; padding: 4px 10px; border-radius: 99px;
+		color: var(--bc); background: color-mix(in srgb, var(--bc) 16%, transparent);
+		border: 1px solid color-mix(in srgb, var(--bc) 35%, transparent);
+	}
+	.status { display: inline-flex; align-items: center; gap: 6px; font-size: .74rem; color: var(--sc); }
+	.status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--sc); box-shadow: 0 0 8px var(--sc); }
+	.card h3 { margin: 0; font-size: 1.18rem; font-weight: 600; letter-spacing: -.01em; }
+	.card-foot { display: flex; justify-content: space-between; align-items: center;
+		margin-top: 20px; font-size: .82rem; color: #8b93a9; }
+	.card-foot .muted { opacity: .6; }
+	.card .arrow { font-size: 1.1rem; transition: transform .3s; color: color-mix(in srgb, var(--tc) 80%, #fff); }
+	.card:hover .arrow { transform: translateX(5px); }
+
+	/* ── FOOTER ───────────────────────────────────── */
+	/* CTA do planetário — fica ACIMA da linha divisória */
+	.explore-cta { display: flex; justify-content: flex-end; margin-top: auto; padding-top: 56px; }
+	.foot { margin-top: 24px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,.07);
+		font-size: .84rem; color: #70778c; text-align: right; }
+	.planet-link { color: #a78bfa; text-decoration: none; font-weight: 500;
+		padding: 10px 20px; border-radius: 99px; border: 1px solid rgba(167,139,250,.3);
+		transition: background .25s, transform .25s; }
+	.planet-link:hover { background: rgba(167,139,250,.12); transform: translateY(-2px); }
+
+	/* ── OVERLAY / PANEL ──────────────────────────── */
+	.overlay {
+		position: fixed; inset: 0; z-index: 50;
+		display: flex; justify-content: flex-end;
+		background: rgba(4,5,12,.55);
+		backdrop-filter: blur(4px);
+		animation: fade .3s ease;
+	}
+	@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+	.panel {
+		width: min(760px, 94vw); height: 100%;
+		border-radius: 28px 0 0 28px; padding: 0;
+		display: flex; flex-direction: column;
+		animation: slide .4s cubic-bezier(.2,.8,.2,1);
+		background: rgba(14,16,26,.72);
+	}
+	@keyframes slide { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+	.panel-head { display: flex; justify-content: space-between; align-items: flex-start;
+		padding: 26px 28px 18px; border-bottom: 1px solid rgba(255,255,255,.07); }
+	.panel-head h2 { margin: 12px 0 0; font-size: 1.5rem; font-weight: 650; }
+	.close { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
+		color: #cbd2e6; width: 34px; height: 34px; border-radius: 10px; cursor: pointer;
+		font-size: .9rem; transition: background .2s; }
+	.close:hover { background: rgba(255,255,255,.14); }
+	.panel-body { overflow-y: auto; padding: 24px 28px 36px; }
+
+	/* README vem de marked → precisa de :global para alcançar o HTML injetado */
+	.readme :global(h1) { font-size: 1.4rem; margin: 0 0 12px; color: #e8ebf5; }
+	.readme :global(h2) { font-size: 1.1rem; margin: 22px 0 8px; color: #c7cde0; }
+	.readme :global(h3) { font-size: 1rem; margin: 18px 0 6px; color: #c7cde0; }
+	.readme :global(p) { color: #aab2c8; line-height: 1.6; margin: 10px 0; }
+	.readme :global(ul),
+	.readme :global(ol) { color: #aab2c8; line-height: 1.6; padding-left: 22px; margin: 10px 0; }
+	.readme :global(li) { margin: 4px 0; }
+	.readme :global(a) { color: #7fb0e6; text-decoration: none; }
+	.readme :global(a:hover) { text-decoration: underline; }
+	.readme :global(strong) { color: #e8ebf5; font-weight: 650; }
+	.readme :global(code) { font-family: 'SF Mono', ui-monospace, monospace; font-size: .85em;
+		background: rgba(255,255,255,.08); padding: 2px 6px; border-radius: 6px; color: #d6dcea; }
+	.readme :global(pre) { background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.08);
+		border-radius: 12px; padding: 14px 16px; overflow-x: auto; margin: 14px 0; }
+	.readme :global(pre code) { background: none; padding: 0; }
+	.readme :global(blockquote) { border-left: 3px solid #7c3aed; margin: 14px 0; padding: 4px 14px;
+		color: #c3c9db; background: rgba(124,58,237,.08); border-radius: 0 8px 8px 0; }
+
+	.code-block { margin-top: 26px; border-radius: 16px; overflow: hidden;
+		border: 1px solid rgba(255,255,255,.08); background: rgba(0,0,0,.35); }
+	.file-tabs { display: flex; gap: 2px; padding: 8px 8px 0; background: rgba(255,255,255,.03);
+		overflow-x: auto; }
+	.file-tab { background: transparent; border: none; color: #8b93a9; cursor: pointer;
+		padding: 8px 14px; border-radius: 8px 8px 0 0; font-size: .82rem; white-space: nowrap;
+		font-family: 'SF Mono', ui-monospace, monospace; }
+	.file-tab.active { color: #fff; background: rgba(0,0,0,.4); }
+	.code { margin: 0; padding: 18px 20px; overflow-x: auto;
+		font-family: 'SF Mono', ui-monospace, 'Cascadia Code', monospace;
+		font-size: .84rem; line-height: 1.6; color: #d6dcea; }
+	.code-actions { display: flex; gap: 10px; padding: 12px 16px;
+		border-top: 1px solid rgba(255,255,255,.06); }
+	.ghost-btn { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
+		color: #d6dcea; padding: 8px 16px; border-radius: 10px; cursor: pointer; font-size: .82rem;
+		transition: background .2s, transform .2s; }
+	.ghost-btn:hover { background: rgba(255,255,255,.14); transform: translateY(-1px); }
+
+	.empty { text-align: center; padding: 48px 20px; color: #8b93a9; }
+	.empty span { font-size: 2.4rem; display: block; margin-bottom: 12px; }
+
+	@media (max-width: 560px) {
+		.panel { border-radius: 0; width: 100vw; }
 	}
 </style>

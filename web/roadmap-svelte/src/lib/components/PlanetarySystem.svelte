@@ -8,7 +8,7 @@
 	import { OrbitalCamera } from '$lib/planetarium/camera.js';
 	import { SolarSystem }   from '$lib/planetarium/scene.js';
 
-	let { tracks = [], onTopicSelect } = $props();
+	let { tracks = [], onTopicSelect, onFocusChange } = $props();
 
 	// ── DOM / Three core ───────────────────────────────────────────────────────
 	let containerEl = $state(null);
@@ -49,9 +49,17 @@
 		}
 
 		// ── Pós-processamento: bloom ──────────────────────────────────────────
-		composer = new EffectComposer(renderer);
+		// Render target com MSAA (samples) → o EffectComposer, por padrão, não
+		// tem antialiasing; sem isso as bordas das esferas ficam serrilhadas
+		// mesmo com antialias:true no renderer.
+		const dpr = Math.min(devicePixelRatio, 2);
+		const rt = new THREE.WebGLRenderTarget(w * dpr, h * dpr, {
+			samples: 4,
+			type: THREE.HalfFloatType
+		});
+		composer = new EffectComposer(renderer, rt);
 		composer.setSize(w, h);
-		composer.setPixelRatio(Math.min(devicePixelRatio, 2));
+		composer.setPixelRatio(dpr);
 		composer.addPass(new RenderPass(scene, orbitalCam.camera));
 		// strength, radius, threshold — bloom sutil só na auréola, sem estourar o centro
 		bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.35, 0.5, 0.9);
@@ -74,6 +82,8 @@
 	let pointer = { down: false, x: 0, y: 0, button: 0 };
 
 	function onPointerDown(e) {
+		// Botão direito (2) não faz nada — evita quebrar a navegação.
+		if (e.button === 2) return;
 		pointer.down = true;
 		pointer.x = e.clientX; pointer.y = e.clientY;
 		pointer.button = e.button;
@@ -85,8 +95,8 @@
 		const dy = e.clientY - pointer.y;
 		pointer.x = e.clientX; pointer.y = e.clientY;
 
-		if (pointer.button === 2 || e.shiftKey) orbitalCam.pan(dx, dy);
-		else                                     orbitalCam.orbit(dx, dy);
+		if (e.shiftKey) orbitalCam.pan(dx, dy);
+		else            orbitalCam.orbit(dx, dy);
 	}
 
 	function onPointerUp(e) {
@@ -128,12 +138,14 @@
 
 		orbitalCam.focusOn(new THREE.Vector3(0, 0, 0), dist);
 		setTimeout(() => solar.buildMoons(id), 200);
+		onFocusChange?.(true);
 	}
 
 	function deselectPlanet() {
 		if (solar.selectedPlanetId) solar.removeMoons(solar.selectedPlanetId);
 		solar.exitFocus();
 		orbitalCam.reset(180);
+		onFocusChange?.(false);
 	}
 
 	// ── Resize / reatividade / lifecycle ────────────────────────────────────────

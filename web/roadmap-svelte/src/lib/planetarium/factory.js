@@ -1,7 +1,8 @@
 import * as THREE from 'three';
-import { makePlanetTex, makeSunGlowTex, makeTextSprite } from './textures.js';
+import { makeSunGlowTex, makeTextSprite } from './textures.js';
 import { makeOrbitLine } from './orbit.js';
 import { createSunMaterial } from './sunShader.js';
+import { createPlanetMaterial, createMoonMaterial } from './planetShader.js';
 
 const SUN_RADIUS = 13; // raio base do sol
 
@@ -58,17 +59,16 @@ export function createSun() {
  * Cria o mesh, label e linha de órbita de um planeta.
  * @returns { mesh, label, orbitLine }
  */
-export function createPlanet(track, color, radius, inclination) {
-	const mesh = new THREE.Mesh(
-		new THREE.SphereGeometry(7, 48, 48),
-		new THREE.MeshStandardMaterial({
-			map: makePlanetTex(color), roughness: 0.78, metalness: 0.1,
-			emissive: new THREE.Color(color), emissiveIntensity: 0.18
-		})
-	);
-	mesh.castShadow = mesh.receiveShadow = true;
+export function createPlanet(track, color, radius, inclination, profile = null) {
+	const PR = 7;
+	// Superfície procedural na GPU (shader). O próprio shader faz a iluminação
+	// e o rim light atmosférico, então usamos ShaderMaterial direto.
+	const prof = profile ?? { kind: 'gas', palette: [color, color, color, color] };
+	const material = createPlanetMaterial(prof);
+	const mesh = new THREE.Mesh(new THREE.SphereGeometry(PR, 96, 96), material);
 	mesh.userData.removable = true;
 	mesh.userData.planetId  = track.id;
+	mesh.userData.planetMat = material; // referência p/ animar uTime / uLightDir
 
 	const label = makeTextSprite(track.nome, color);
 	label.userData.removable = true;
@@ -80,26 +80,25 @@ export function createPlanet(track, color, radius, inclination) {
 }
 
 /**
- * Cria o mesh, label e linha de órbita de uma lua.
- * @param style  entrada de STATUS_STYLE (cor + emissive intensity)
- * @returns { mesh, label, orbitLine }
+ * Cria o mesh, label e linha de órbita de uma lua, com superfície procedural
+ * (shader). O perfil (tipo + paleta) é atribuído por semente do tópico.
+ * @param profile  { kind, palette:[hex,hex,hex] }
+ * @returns { mesh, label, orbitLine, material }
  */
-export function createMoon(topic, style, radius, inclination) {
-	const mesh = new THREE.Mesh(
-		new THREE.SphereGeometry(3.5, 32, 32),
-		new THREE.MeshStandardMaterial({
-			map: makePlanetTex(style.color, 128), roughness: 0.85,
-			emissive: new THREE.Color(style.color), emissiveIntensity: style.ei + 0.12
-		})
-	);
-	mesh.castShadow = true;
+export function createMoon(topic, profile, radius, inclination) {
+	const MR = 3.5;
+	const material = createMoonMaterial(profile);
+	const mesh = new THREE.Mesh(new THREE.SphereGeometry(MR, 48, 48), material);
 	mesh.userData.removable = true;
+	mesh.userData.moonMat   = material; // p/ animar uTime
 
-	const label = makeTextSprite(topic.nome, style.color, 10);
+	// Label na cor de destaque da paleta da lua
+	const labelHex = (profile.palette?.[2]) ?? 0xcccccc;
+	const label = makeTextSprite(topic.nome, labelHex, 10);
 	label.userData.removable = true;
 
 	const orbitLine = makeOrbitLine(radius, inclination, new THREE.Vector3(), 0x1a2a3a);
 	orbitLine.userData.removable = true;
 
-	return { mesh, label, orbitLine };
+	return { mesh, label, orbitLine, material };
 }

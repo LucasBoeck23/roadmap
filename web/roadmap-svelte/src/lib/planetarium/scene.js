@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { PLANET_COLORS, STATUS_STYLE } from './constants.js';
+import { PLANET_COLORS, PLANET_PROFILES, moonProfileFor } from './constants.js';
 import { orbitalPosition } from './orbit.js';
 import { createStarfield, createSun, createPlanet, createMoon } from './factory.js';
 import { disposeObject } from './dispose.js';
@@ -34,7 +34,8 @@ export class SolarSystem {
 		this.starParts.forEach(o => this.scene.add(o));
 
 		tracks.forEach((track, idx) => {
-			const color       = PLANET_COLORS[idx % PLANET_COLORS.length];
+			const profile     = PLANET_PROFILES[idx % PLANET_PROFILES.length];
+			const color       = profile.base ?? PLANET_COLORS[idx % PLANET_COLORS.length];
 			const radius      = 50 + idx * 42;
 			// Velocidade orbital ~ 1/raio (Kepler simplificado): planetas distantes
 			// giram bem mais devagar, como num sistema solar real.
@@ -42,7 +43,7 @@ export class SolarSystem {
 			const inclination = (idx % 2 === 0 ? 1 : -1) * (0.08 + idx * 0.04);
 			const phase       = (idx / tracks.length) * Math.PI * 2;
 
-			const { mesh, label, orbitLine } = createPlanet(track, color, radius, inclination);
+			const { mesh, label, orbitLine } = createPlanet(track, color, radius, inclination, profile);
 			this.scene.add(mesh, label, orbitLine);
 
 			this.planets[track.id] = {
@@ -75,9 +76,10 @@ export class SolarSystem {
 			const phase   = ((idx % perRing) / perRing) * Math.PI * 2;
 			const speed   = (0.0015 + idx * 0.0003) * (idx % 2 ? 1 : -1);
 			const inc     = (idx % 2 ? 1 : -1) * (0.05 + (idx % 3) * 0.06);
-			const style   = STATUS_STYLE[topic.status] ?? STATUS_STYLE['nao-iniciado'];
+			// Perfil de lua estável por semente do tópico (id, ou track::idx)
+			const profile = moonProfileFor(topic.id ?? `${trackId}::${idx}`);
 
-			const { mesh, label, orbitLine } = createMoon(topic, style, radius, inc);
+			const { mesh, label, orbitLine } = createMoon(topic, profile, radius, inc);
 			this.scene.add(mesh, label, orbitLine);
 
 			const key = `${trackId}::${idx}`;
@@ -124,6 +126,10 @@ export class SolarSystem {
 			pd.label.position.copy(wpos).y += 11;
 			pd.mesh.rotation.y += 0.003;
 
+			// Anima o shader do planeta (nuvens/lava/redemoinhos)
+			const pm = pd.mesh.userData.planetMat;
+			if (pm) pm.uniforms.uTime.value = elapsed;
+
 			// Luas deste planeta. Elas só existem em modo foco, com o planeta
 			// fixo no centro (0,0,0) — então a órbita da lua é ESTÁTICA.
 			// A linha é criada uma vez em createMoon e nunca recalculada.
@@ -136,6 +142,8 @@ export class SolarSystem {
 				md.mesh.position.copy(mpos);
 				md.label.position.copy(mpos).y += 7;
 				md.mesh.rotation.y += 0.004;
+				const mm = md.mesh.userData.moonMat;
+				if (mm) mm.uniforms.uTime.value = elapsed;
 			});
 		});
 
