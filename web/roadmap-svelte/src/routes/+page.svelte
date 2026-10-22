@@ -10,7 +10,8 @@
 	import 'prismjs/components/prism-csharp';
 	import 'prismjs/components/prism-dart';
 	import { base }    from '$app/paths';
-	import { getTrackList, getTopicsByTrack, getReadme, getFile } from '$lib/topicService.js';
+	import { getTrackList, getTopicsByTrack, getReadme, getFile, flattenFiles, findFirstFile } from '$lib/topicService.js';
+	import FileTree    from '$lib/components/FileTree.svelte';
 
 	// Metadados visuais extras por track (blurb + cores do visual premium)
 	const TRACK_SKIN = {
@@ -41,13 +42,36 @@
 	let activeTrack   = $derived(tracks.find(t => t.id === activeTrackId) ?? null);
 	let selected      = $state(null);        // tópico aberto no painel
 
-	// ── Painel: README + viewer de código ──────────────────────────────────────
+	// ── Painel: árvore de pastas + viewer de código + README da parte ───────────
 	let readmeHtml   = $state('');
-	let activeFile   = $state(null);
+	let activeFile   = $state(null);   // caminho do arquivo selecionado
+	let activeReadme = $state(null);   // caminho do README exibido à direita
 	let fileContent  = $state('');
 	let copied       = $state(false);
-	const readmeCache  = new Map();
-	const contentCache = new Map();
+	const readmeCache  = new Map();    // id::caminho-do-readme -> markdown cru
+	const contentCache = new Map();    // id::caminho -> conteúdo do arquivo
+
+	// Árvore raiz do tópico aberto (defensivo: cai p/ arquivos planos se faltar).
+	let tree = $derived.by(() => {
+		if (!selected) return null;
+		if (selected.tree) return selected.tree;
+		// fallback: monta um nó raiz a partir da lista plana `arquivos`
+		const arquivos = (selected.arquivos ?? []).map((caminho) => ({
+			nome: caminho.split('/').pop() ?? caminho,
+			caminho
+		}));
+		return {
+			nome: '', caminho: '', temReadme: !!selected.temReadme,
+			readme: selected.temReadme ? 'README.md' : null,
+			arquivos, subpastas: []
+		};
+	});
+
+	// Nº de arquivos reais (via árvore quando houver, senão lista plana).
+	function topicFileCount(topic) {
+		if (topic?.tree) return flattenFiles(topic.tree).length;
+		return topic?.arquivos?.length ?? 0;
+	}
 
 	let codeHtml = $derived.by(() => {
 		if (!activeFile) return '';
@@ -58,34 +82,93 @@
 
 	function fileName(path) { return path.split('/').pop() ?? path; }
 
+	// Encontra o README "da parte": o da pasta que contém `filePath`, se existir;
+	// caso contrário cai para o README raiz do tópico.
+	function readmeForFile(node, filePath, inherited) {
+		const own = node?.readme ?? inherited;
+		// o arquivo está diretamente nesta pasta?
+		if ((node?.arquivos ?? []).some((f) => f.caminho === filePath)) return own;
+		for (const child of node?.subpastas ?? []) {
+			const found = readmeForFile(child, filePath, own);
+			if (found !== undefined && found !== null) return found;
+			// se o arquivo pertence a essa subárvore mas sem README próprio,
+			// `found` pode ser o herdado — devolvemos assim que o localizarmos.
+			if (childContainsFile(child, filePath)) return found ?? own;
+		}
+		return undefined;
+	}
+
+	function childContainsFile(node, filePath) {
+		if ((node?.arquivos ?? []).some((f) => f.caminho === filePath)) return true;
+		return (node?.subpastas ?? []).some((c) => childContainsFile(c, filePath));
+	}
+
+	async function loadReadme(readmePath) {
+		if (!readmePath) {
+			readmeHtml = '<p style="opacity:.6;font-style:italic">Sem README para esta parte.</p>';
+			return;
+		}
+		// Chave com escopo no tópico: dois estudos cujo README-raiz vive em
+		// "README.md" não podem compartilhar o mesmo slot de cache.
+		const cacheKey = `${selected?.id}::${readmePath}`;
+		const md = readmeCache.has(cacheKey)
+			? readmeCache.get(cacheKey)
+			: await getFile(selected.pasta, readmePath);
+		readmeCache.set(cacheKey, md);
+		readmeHtml = md
+			? marked.parse(md)
+			: '<p style="opacity:.6;font-style:italic">Sem conteúdo ainda para esta parte.</p>';
+	}
+
 	async function openTopic(topic) {
 		selected = topic;
 		readmeHtml = '';
 		activeFile = null;
+		activeReadme = null;
 		fileContent = '';
 
-		// README
-		const md = readmeCache.has(topic.id)
-			? readmeCache.get(topic.id)
-			: await getReadme(topic.pasta);
-		readmeCache.set(topic.id, md);
-		readmeHtml = md
-			? marked.parse(md)
-			: '<p style="opacity:.6;font-style:italic">Sem conteúdo ainda para este tópico.</p>';
+		const root = topic.tree ?? null;
+		const rootReadme = root?.readme ?? (topic.temReadme ? 'README.md' : null);
+		activeReadme = rootReadme;
 
-		// primeiro arquivo
-		const primeiro = topic.arquivos?.[0] ?? null;
-		if (primeiro) await selectFile(primeiro);
+		// auto-seleciona o primeiro arquivo (depth-first) e mostra o README raiz
+		const first = root ? findFirstFile(root) : (topic.arquivos?.[0]
+			? { nome: fileName(topic.arquivos[0]), caminho: topic.arquivos[0] }
+			: null);
+		if (first) {
+			await selectFile(first);
+		} else {
+			await loadReadme(rootReadme);
+		}
 	}
 
-	async function selectFile(filePath) {
+	// Seleciona um ARQUIVO (objeto {nome, caminho}) a partir da árvore.
+	async function selectFile(file) {
+		const filePath = file.caminho;
 		activeFile = filePath;
 		const key = `${selected?.id}::${filePath}`;
-		if (contentCache.has(key)) { fileContent = contentCache.get(key); return; }
-		const raw = await getFile(selected.pasta, filePath);
-		const content = raw ?? '// Arquivo não encontrado';
-		contentCache.set(key, content);
-		fileContent = content;
+		if (contentCache.has(key)) {
+			fileContent = contentCache.get(key);
+		} else {
+			const raw = await getFile(selected.pasta, filePath);
+			const content = raw ?? '// Arquivo não encontrado';
+			contentCache.set(key, content);
+			fileContent = content;
+		}
+
+		// README "da parte": o da pasta do arquivo, senão o raiz do tópico
+		const rootReadme = tree?.readme ?? (selected.temReadme ? 'README.md' : null);
+		const part = tree ? readmeForFile(tree, filePath, rootReadme) : rootReadme;
+		activeReadme = (part ?? rootReadme) ?? null;
+		await loadReadme(activeReadme);
+	}
+
+	// Seleciona explicitamente o README de uma pasta (clique no 📖 da árvore).
+	async function selectReadme(readmePath) {
+		activeFile = null;
+		fileContent = '';
+		activeReadme = readmePath;
+		await loadReadme(readmePath);
 	}
 
 	async function copyCode() {
@@ -96,7 +179,13 @@
 		} catch {}
 	}
 
-	function closePanel() { selected = null; activeFile = null; fileContent = ''; }
+	function closePanel() {
+		selected = null;
+		activeFile = null;
+		activeReadme = null;
+		fileContent = '';
+		readmeHtml = '';
+	}
 
 	// ── Spotlight que segue o mouse (efeito premium) ───────────────────────────
 	let mx = $state(50), my = $state(30);
@@ -214,8 +303,9 @@
 						</div>
 						<h3>{topic.nome}</h3>
 						<div class="card-foot">
-							{#if topic.arquivos?.length}
-								<span>{topic.arquivos.length} arquivo{topic.arquivos.length !== 1 ? 's' : ''}</span>
+							{#if topicFileCount(topic)}
+								{@const n = topicFileCount(topic)}
+								<span>{n} arquivo{n !== 1 ? 's' : ''}</span>
 							{:else}
 								<span class="muted">em breve</span>
 							{/if}
@@ -254,32 +344,49 @@
 				</header>
 
 				<div class="panel-body">
-					<article class="readme markdown-body">
-						{@html readmeHtml}
-					</article>
+					<!-- ESQUERDA: árvore de pastas/arquivos do estudo -->
+					<aside class="tree-pane">
+						<div class="tree-header">Estrutura</div>
+						<div class="tree-scroll">
+							<FileTree
+								node={tree}
+								label={selected.nome}
+								activeFile={activeFile}
+								activeReadme={activeReadme}
+								onSelectFile={selectFile}
+								onSelectReadme={selectReadme}
+							/>
+						</div>
+					</aside>
 
-					{#if selected.arquivos?.length}
-						<div class="code-block">
-							<div class="file-tabs">
-								{#each selected.arquivos as f}
-									<button class="file-tab" class:active={f === activeFile}
-										onclick={() => selectFile(f)}>{fileName(f)}</button>
-								{/each}
+					<!-- DIREITA: código do arquivo + README da parte -->
+					<section class="content-pane">
+						{#if topicFileCount(selected) || tree?.readme}
+							{#if activeFile}
+								<div class="code-block">
+									<div class="file-tabs">
+										<span class="file-tab active">{fileName(activeFile)}</span>
+									</div>
+									<pre class="code"><code>{@html codeHtml}</code></pre>
+									<div class="code-actions">
+										<button class="ghost-btn" onclick={copyCode}>{copied ? '✓ Copiado' : 'Copiar código'}</button>
+										{#if selected.download}
+											<a class="ghost-btn" href="{base}/{selected.download}" download>⬇ Baixar projeto (.zip)</a>
+										{/if}
+									</div>
+								</div>
+							{/if}
+
+							<article class="readme markdown-body">
+								{@html readmeHtml}
+							</article>
+						{:else}
+							<div class="empty">
+								<span>🚧</span>
+								<p>Conteúdo em breve. Este tópico ainda está no forno.</p>
 							</div>
-							<pre class="code"><code>{@html codeHtml}</code></pre>
-							<div class="code-actions">
-								<button class="ghost-btn" onclick={copyCode}>{copied ? '✓ Copiado' : 'Copiar código'}</button>
-								{#if selected.download}
-									<a class="ghost-btn" href="{base}/{selected.download}" download>⬇ Baixar projeto (.zip)</a>
-								{/if}
-							</div>
-						</div>
-					{:else}
-						<div class="empty">
-							<span>🚧</span>
-							<p>Conteúdo em breve. Este tópico ainda está no forno.</p>
-						</div>
-					{/if}
+						{/if}
+					</section>
 				</div>
 			</div>
 		</div>
@@ -494,7 +601,42 @@
 		color: #cbd2e6; width: 34px; height: 34px; border-radius: 10px; cursor: pointer;
 		font-size: .9rem; transition: background .2s; }
 	.close:hover { background: rgba(255,255,255,.14); }
-	.panel-body { overflow-y: auto; padding: 24px 28px 36px; }
+	/* corpo em duas colunas: árvore à esquerda, conteúdo à direita */
+	.panel-body {
+		flex: 1;
+		min-height: 0;
+		display: grid;
+		grid-template-columns: minmax(200px, 260px) 1fr;
+		gap: 0;
+	}
+
+	.tree-pane {
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+		border-right: 1px solid rgba(255,255,255,.07);
+		background: rgba(0,0,0,.18);
+	}
+	.tree-header {
+		padding: 16px 16px 10px;
+		font-size: .72rem;
+		letter-spacing: .16em;
+		text-transform: uppercase;
+		font-weight: 600;
+		color: #8b93a9;
+	}
+	.tree-scroll {
+		overflow-y: auto;
+		padding: 0 8px 20px;
+		flex: 1;
+		min-height: 0;
+	}
+
+	.content-pane {
+		overflow-y: auto;
+		padding: 24px 28px 36px;
+		min-height: 0;
+	}
 
 	/* README vem de marked → precisa de :global para alcançar o HTML injetado */
 	.readme :global(h1) { font-size: 1.4rem; margin: 0 0 12px; color: #e8ebf5; }
@@ -515,7 +657,7 @@
 	.readme :global(blockquote) { border-left: 3px solid #7c3aed; margin: 14px 0; padding: 4px 14px;
 		color: #c3c9db; background: rgba(124,58,237,.08); border-radius: 0 8px 8px 0; }
 
-	.code-block { margin-top: 26px; border-radius: 16px; overflow: hidden;
+	.code-block { margin: 0 0 26px; border-radius: 16px; overflow: hidden;
 		border: 1px solid rgba(255,255,255,.08); background: rgba(0,0,0,.35); }
 	.file-tabs { display: flex; gap: 2px; padding: 8px 8px 0; background: rgba(255,255,255,.03);
 		overflow-x: auto; }
@@ -538,5 +680,15 @@
 
 	@media (max-width: 560px) {
 		.panel { border-radius: 0; width: 100vw; }
+		.panel-body {
+			grid-template-columns: 1fr;
+			grid-template-rows: auto 1fr;
+			overflow-y: auto;
+		}
+		.tree-pane {
+			border-right: none;
+			border-bottom: 1px solid rgba(255,255,255,.07);
+			max-height: 38vh;
+		}
 	}
 </style>

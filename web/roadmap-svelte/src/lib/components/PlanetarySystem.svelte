@@ -8,7 +8,16 @@
 	import { OrbitalCamera } from '$lib/planetarium/camera.js';
 	import { SolarSystem }   from '$lib/planetarium/scene.js';
 
-	let { tracks = [], onTopicSelect, onFocusChange } = $props();
+	let { tracks = [], onTopicSelect, onFocusChange, onNavChange } = $props();
+
+	/** Emite o estado de navegação (profundidade + breadcrumb) para o HUD. */
+	function emitNav() {
+		onNavChange?.({
+			focused: !!solar?.selectedPlanetId,
+			depth: solar?.depth?.() ?? 0,
+			breadcrumb: solar?.breadcrumb?.() ?? []
+		});
+	}
 
 	// ── DOM / Three core ───────────────────────────────────────────────────────
 	let containerEl = $state(null);
@@ -118,8 +127,63 @@
 
 		const item = solar.pick(raycaster);
 		if (!item) return;
-		if (item.type === 'planet')    selectPlanet(item.id);
-		else if (item.type === 'moon') onTopicSelect?.(item.topic);
+		if (item.type === 'planet')      selectPlanet(item.id);
+		else if (item.type === 'moon')   openTopicOrDrill(item.topic);
+		else if (item.type === 'drill')  openBodyOrDrill(item.body);
+	}
+
+	// ── Drill-down (galáxia dentro de galáxia) ───────────────────────────────
+	/**
+	 * Clique numa lua (tópico): se tem subpastas/arquivos, entra na galáxia
+	 * aninhada; senão, abre o painel do tópico como hoje.
+	 */
+	function openTopicOrDrill(topic) {
+		if (solar.drillIntoTopic(topic)) {
+			transitionToDrill();
+			emitNav();
+		} else {
+			onTopicSelect?.(topic);
+		}
+	}
+
+	/**
+	 * Clique num corpo do drill: pasta com filhos → entra mais fundo;
+	 * folha (arquivo, ou pasta vazia) → abre o painel com o arquivo
+	 * pré-selecionado e o README da parte.
+	 */
+	function openBodyOrDrill(body) {
+		if (body.drillable && solar.drillIntoBody(body)) {
+			transitionToDrill();
+			emitNav();
+		} else {
+			// Folha: abre o painel. Para um arquivo, passa o caminho p/ pré-seleção.
+			onTopicSelect?.(body.topic, body.file ?? null);
+		}
+	}
+
+	/** Reposiciona a câmera para enquadrar a galáxia aninhada recém-construída. */
+	function transitionToDrill() {
+		const extent = solar.drillExtent();
+		const dist   = Math.max(55, Math.min(220, extent * 1.9 + 34));
+		orbitalCam.focusOn(new THREE.Vector3(0, 0, 0), dist);
+	}
+
+	/** Sobe um nível no drill (chamado pelo HUD "subir um nível"). */
+	export function drillUp() {
+		if (!solar?.isDrilled()) { deselectPlanet(); return; }
+		const stillDrilled = solar.drillUp();
+		if (stillDrilled) {
+			transitionToDrill();
+		} else {
+			// Voltou às luas do tópico: reenquadra como no selectPlanet.
+			const id = solar.selectedPlanetId;
+			if (id) {
+				const extent = solar.moonsExtent(id);
+				const dist   = Math.max(55, Math.min(200, extent * 1.8 + 30));
+				orbitalCam.focusOn(new THREE.Vector3(0, 0, 0), dist);
+			}
+		}
+		emitNav();
 	}
 
 	// ── Seleção de planeta ──────────────────────────────────────────────────────
@@ -139,13 +203,14 @@
 		orbitalCam.focusOn(new THREE.Vector3(0, 0, 0), dist);
 		setTimeout(() => solar.buildMoons(id), 200);
 		onFocusChange?.(true);
+		emitNav();
 	}
 
 	function deselectPlanet() {
-		if (solar.selectedPlanetId) solar.removeMoons(solar.selectedPlanetId);
 		solar.exitFocus();
 		orbitalCam.reset(180);
 		onFocusChange?.(false);
+		emitNav();
 	}
 
 	// ── Resize / reatividade / lifecycle ────────────────────────────────────────
