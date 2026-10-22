@@ -46,3 +46,35 @@ export async function getFile(pasta, filePath, base = '') {
 export function clearCache() {
 	cache = null;
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Helpers puros para navegar a árvore (`tree`) já carregada de um tópico.
+// Não fazem fetch — operam sobre o nó recursivo { nome, caminho, temReadme,
+// readme, arquivos: [{ nome, caminho }], subpastas: Node[] }.
+// ──────────────────────────────────────────────────────────────────────────
+
+/** Lista plana { nome, caminho } de todos os arquivos do subtree (profundidade ilimitada). */
+export function flattenFiles(node) {
+	if (!node) return [];
+	const out = [...(node.arquivos ?? [])];
+	for (const child of node.subpastas ?? []) {
+		out.push(...flattenFiles(child));
+	}
+	return out;
+}
+
+/** Primeiro arquivo em ordem depth-first (arquivos da pasta antes das subpastas), ou null. */
+export function findFirstFile(node) {
+	if (!node) return null;
+	if (node.arquivos && node.arquivos.length) return node.arquivos[0];
+	for (const child of node.subpastas ?? []) {
+		const found = findFirstFile(child);
+		if (found) return found;
+	}
+	return null;
+}
+
+/** Quantidade total de arquivos no subtree. */
+export function countFiles(node) {
+	return flattenFiles(node).length;
+}

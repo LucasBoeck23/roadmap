@@ -4,7 +4,22 @@
  *
  * Substitui a MSBuild inline task do RoadmapApp.csproj.
  * Escaneia ../../src/, gera static/data/topics.json e
- * copia README.md + *.cs para static/src/ (servidos como assets estáticos).
+ * copia README.md + *.cs/*.dart para static/src/ (servidos como assets estáticos).
+ *
+ * topics.json: { [trackId]: Topic[] }
+ * Topic = {
+ *   id, nome, nivel, pasta, temReadme, status, download,
+ *   arquivos: string[],   // lista PLANA (retrocompatível) de caminhos relativos a `pasta`
+ *   tree: Node            // hierarquia recursiva de pastas (nova fonte da verdade)
+ * }
+ * Node = {
+ *   nome,                 // nome de exibição da pasta
+ *   caminho,              // caminho relativo a `pasta` ('' para a raiz)
+ *   temReadme,            // README.md existe nesta pasta?
+ *   readme,               // caminho relativo do README.md desta pasta, ou null
+ *   arquivos: Array<{ nome, caminho }>,  // .cs/.dart diretamente nesta pasta
+ *   subpastas: Node[]     // filhos recursivos, mesma forma
+ * }
  *
  * Rodado automaticamente via "prebuild" e "predev" no package.json.
  */
@@ -12,7 +27,6 @@
 import { readdirSync, existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, statSync } from 'fs';
 import { join, relative, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import JSZip from 'jszip';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -21,8 +35,11 @@ const OUT_JSON    = join(__dirname, '..', 'static', 'data', 'topics.json');
 const OUT_SRC     = join(__dirname, '..', 'static', 'src');
 const OUT_ZIP_DIR = join(__dirname, '..', 'static', 'downloads');
 
-// Pastas/arquivos que nunca entram no zip (lixo de build / vcs)
+// Pastas/arquivos que nunca entram no zip nem na árvore (lixo de build / vcs)
 const ZIP_IGNORE = new Set(['bin', 'obj', '.git', '.vs', '.idea', 'node_modules', '.dart_tool']);
+
+// Extensões de código que são expostas no viewer
+const CODE_EXTS = ['.cs', '.dart'];
 
 // Mesmo mapeamento da MSBuild task
 const NIVEL_MAP = {
@@ -43,22 +60,12 @@ function listDirs(p) {
 		.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Coleta arquivos recursivamente, excluindo bin/ e obj/ */
-function collectFiles(dir, ext) {
-	const results = [];
-	function walk(current) {
-		for (const entry of readdirSync(current)) {
-			if (entry === 'bin' || entry === 'obj') continue;
-			const full = join(current, entry);
-			if (isDir(full)) {
-				walk(full);
-			} else if (entry.endsWith(ext)) {
-				results.push(full);
-			}
-		}
-	}
-	walk(dir);
-	return results.sort();
+function isCodeFile(name) {
+	return CODE_EXTS.some(ext => name.endsWith(ext));
+}
+
+function toPosix(p) {
+	return p.replace(/\\/g, '/');
 }
 
 /** Copia um arquivo garantindo que o diretório de destino exista */
@@ -83,16 +90,37 @@ function collectAllFiles(dir) {
 }
 
 /**
+ * Carrega o JSZip de forma preguiçosa/dinâmica. Retorna a classe JSZip ou null
+ * quando o pacote não está disponível (ex.: node_modules ausente / registry
+ * bloqueado). Avisa apenas uma vez.
+ */
+let jszipState; // undefined = não tentado; null = indisponível; Class = disponível
+async function loadJSZip() {
+	if (jszipState !== undefined) return jszipState;
+	try {
+		const mod = await import('jszip');
+		jszipState = mod.default ?? mod;
+	} catch {
+		console.warn('[generate-topics] jszip indisponível — pulando geração de .zip');
+		jszipState = null;
+	}
+	return jszipState;
+}
+
+/**
  * Empacota a pasta de um tópico num .zip (todos os arquivos exceto ZIP_IGNORE),
  * para que alguém possa baixar e rodar o projeto sem clonar o repositório.
  * O conteúdo do zip fica dentro de uma pasta raiz com o nome do tópico.
+ * Retorna o número de arquivos empacotados, ou -1 quando jszip está indisponível.
  */
 async function zipTopic(topicDir, topicName, destZip) {
+	const JSZip = await loadJSZip();
+	if (!JSZip) return -1;
 	const zip = new JSZip();
 	const root = zip.folder(topicName);
 	const files = collectAllFiles(topicDir);
 	for (const file of files) {
-		const rel = relative(topicDir, file).replace(/\\/g, '/');
+		const rel = toPosix(relative(topicDir, file));
 		root.file(rel, readFileSync(file));
 	}
 	const buf = await zip.generateAsync({
@@ -103,6 +131,66 @@ async function zipTopic(topicDir, topicName, destZip) {
 	mkdirSync(dirname(destZip), { recursive: true });
 	writeFileSync(destZip, buf);
 	return files.length;
+}
+
+/**
+ * Constrói recursivamente o nó de uma pasta e copia seus assets (README +
+ * arquivos de código em qualquer profundidade) para static/src.
+ *
+ * @param absDir      caminho absoluto da pasta atual
+ * @param relFromTopic caminho relativo à raiz do tópico ('' para a raiz)
+ * @param destBase    pasta de destino em static/src para este tópico
+ * @param flat        acumulador da lista plana de caminhos (retrocompatível)
+ * @param counters    contador de arquivos copiados
+ */
+function buildNode(absDir, relFromTopic, destBase, flat, counters) {
+	const displayName = relFromTopic === ''
+		? ''
+		: relFromTopic.split('/').pop();
+
+	// README desta pasta
+	const readmeAbs = join(absDir, 'README.md');
+	const temReadme = existsSync(readmeAbs);
+	let readme = null;
+	if (temReadme) {
+		readme = relFromTopic === '' ? 'README.md' : `${relFromTopic}/README.md`;
+		copyFile(readmeAbs, join(destBase, readme));
+		counters.files++;
+	}
+
+	const entries = readdirSync(absDir)
+		.filter(name => !ZIP_IGNORE.has(name))
+		.map(name => ({ name, full: join(absDir, name) }));
+
+	// Arquivos de código diretamente nesta pasta
+	const arquivos = entries
+		.filter(e => !isDir(e.full) && isCodeFile(e.name))
+		.sort((a, b) => a.name.localeCompare(b.name))
+		.map(e => {
+			const caminho = relFromTopic === '' ? e.name : `${relFromTopic}/${e.name}`;
+			copyFile(e.full, join(destBase, caminho));
+			counters.files++;
+			flat.push(caminho);
+			return { nome: e.name, caminho };
+		});
+
+	// Subpastas (recursão de profundidade ilimitada), ordenadas por nome
+	const subpastas = entries
+		.filter(e => isDir(e.full))
+		.sort((a, b) => a.name.localeCompare(b.name))
+		.map(e => {
+			const childRel = relFromTopic === '' ? e.name : `${relFromTopic}/${e.name}`;
+			return buildNode(e.full, childRel, destBase, flat, counters);
+		});
+
+	return {
+		nome: displayName,
+		caminho: relFromTopic,
+		temReadme,
+		readme,
+		arquivos,
+		subpastas
+	};
 }
 
 if (!existsSync(SRC_DIR)) {
@@ -127,42 +215,33 @@ async function main() {
 			const nivel  = NIVEL_MAP[prefix] ?? 'outro';
 			const nome   = topicDir.name.replace(/^\d+-/, '');
 			const pasta  = `src/${track.name}/${topicDir.name}`;
+			const destBase = join(OUT_SRC, track.name, topicDir.name);
 
-			// README
+			// README do tópico (raiz) — determina status
 			const readmePath = join(topicDir.full, 'README.md');
 			const temReadme  = existsSync(readmePath);
 			let status = 'nao-iniciado';
 			if (temReadme) {
 				const content = readFileSync(readmePath, 'utf8');
 				if (content.length > 100) status = 'em-progresso';
-				copyFile(readmePath, join(OUT_SRC, track.name, topicDir.name, 'README.md'));
-				totalFiles++;
 			}
 
-			// Arquivos .cs e .dart copiados individualmente (para o viewer)
-			const csFiles = collectFiles(topicDir.full, '.cs');
-			const arquivos = csFiles.map(f => relative(topicDir.full, f).replace(/\\/g, '/'));
-			for (const csFile of csFiles) {
-				const rel  = relative(topicDir.full, csFile).replace(/\\/g, '/');
-				copyFile(csFile, join(OUT_SRC, track.name, topicDir.name, rel));
-				totalFiles++;
-			}
-			const dartFiles = collectFiles(topicDir.full, '.dart');
-			for (const dartFile of dartFiles) {
-				const rel  = relative(topicDir.full, dartFile).replace(/\\/g, '/');
-				copyFile(dartFile, join(OUT_SRC, track.name, topicDir.name, rel));
-				totalFiles++;
-			}
+			// Árvore recursiva (também copia README/código em qualquer profundidade)
+			const flat = [];
+			const counters = { files: 0 };
+			const tree = buildNode(topicDir.full, '', destBase, flat, counters);
+			totalFiles += counters.files;
 
 			// ZIP do projeto completo — só gera se houver arquivos de código
 			// (um tópico só com README não precisa de download executável)
 			let download = null;
-			if (csFiles.length || dartFiles.length) {
+			if (flat.length) {
 				const zipRel = `downloads/${track.name}/${topicDir.name}.zip`;
 				const n = await zipTopic(topicDir.full, topicDir.name, join(OUT_ZIP_DIR, track.name, `${topicDir.name}.zip`));
-				download = zipRel;
-				totalZips++;
-				if (n === 0) download = null;
+				if (n > 0) {
+					download = zipRel;
+					totalZips++;
+				}
 			}
 
 			tracks[track.name].push({
@@ -173,10 +252,8 @@ async function main() {
 				temReadme,
 				status,
 				download,  // caminho do zip relativo ao base, ou null
-				arquivos:  [
-					...arquivos,
-					...dartFiles.map(f => relative(topicDir.full, f).replace(/\\/g, '/'))
-				]
+				arquivos:  flat, // lista PLANA retrocompatível (todos os caminhos do subtree)
+				tree       // hierarquia recursiva (nova fonte da verdade)
 			});
 
 			totalTopics++;
