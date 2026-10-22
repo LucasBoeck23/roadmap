@@ -201,6 +201,15 @@
 
 	// ── Helpers ─────────────────────────────────────────────────────────────
 	function fileName(path) { return path.split('/').pop() ?? path; }
+
+	// Rótulo da aba: como a lista é achatada, vários arquivos aninhados podem
+	// ter o mesmo nome-base (ex.: dois "Program.cs"). Mostramos o caminho
+	// relativo ao tópico quando há pasta, para desambiguar as abas; o estado
+	// ativo e a seleção continuam usando o caminho completo.
+	function tabLabel(path) {
+		if (!path) return '';
+		return path.includes('/') ? path : fileName(path);
+	}
 	function langClass(path) {
 		if (!path) return 'language-plaintext';
 		if (path.endsWith('.cs'))   return 'language-csharp';
@@ -330,7 +339,8 @@
 							<div class="topic-file-tabs">
 								{#each topicFilePaths(selectedTopic) as f}
 									<button class="topic-file-tab" class:active={f === topicActiveFile}
-										onclick={() => selectTopicFile(f)}>{fileName(f)}</button>
+										title={f}
+										onclick={() => selectTopicFile(f)}>{tabLabel(f)}</button>
 								{/each}
 							</div>
 							<pre class="topic-code"><code class={langClass(topicActiveFile)}>{@html topicFileHtml}</code></pre>

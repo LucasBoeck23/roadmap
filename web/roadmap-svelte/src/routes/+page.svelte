@@ -48,7 +48,7 @@
 	let activeReadme = $state(null);   // caminho do README exibido à direita
 	let fileContent  = $state('');
 	let copied       = $state(false);
-	const readmeCache  = new Map();    // caminho-do-readme -> markdown cru
+	const readmeCache  = new Map();    // id::caminho-do-readme -> markdown cru
 	const contentCache = new Map();    // id::caminho -> conteúdo do arquivo
 
 	// Árvore raiz do tópico aberto (defensivo: cai p/ arquivos planos se faltar).
@@ -108,10 +108,13 @@
 			readmeHtml = '<p style="opacity:.6;font-style:italic">Sem README para esta parte.</p>';
 			return;
 		}
-		const md = readmeCache.has(readmePath)
-			? readmeCache.get(readmePath)
+		// Chave com escopo no tópico: dois estudos cujo README-raiz vive em
+		// "README.md" não podem compartilhar o mesmo slot de cache.
+		const cacheKey = `${selected?.id}::${readmePath}`;
+		const md = readmeCache.has(cacheKey)
+			? readmeCache.get(cacheKey)
 			: await getFile(selected.pasta, readmePath);
-		readmeCache.set(readmePath, md);
+		readmeCache.set(cacheKey, md);
 		readmeHtml = md
 			? marked.parse(md)
 			: '<p style="opacity:.6;font-style:italic">Sem conteúdo ainda para esta parte.</p>';
