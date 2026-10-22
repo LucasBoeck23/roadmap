@@ -1,12 +1,28 @@
 import * as THREE from 'three';
-import { PLANET_COLORS, PLANET_PROFILES, moonProfileFor } from './constants.js';
+import { PLANET_COLORS, PLANET_PROFILES, moonProfileFor, seedFromString } from './constants.js';
 import { orbitalPosition } from './orbit.js';
 import { createStarfield, createSun, createPlanet, createMoon } from './factory.js';
 import { disposeObject } from './dispose.js';
+import {
+	bodiesFromTopic,
+	pushFrame,
+	popFrame,
+	frameForBody,
+	frameForTopic,
+	breadcrumbFromStack,
+	bodiesForTopFrame
+} from './navigation.js';
 
 /**
  * Orquestra o sistema solar: constrói estrela/planetas/luas, avança a
  * simulação a cada frame e gerencia o foco num planeta.
+ *
+ * Além do nível raiz (tracks → planetas, tópicos → luas), suporta
+ * DRILL-DOWN: ao entrar num tópico (ou pasta) com subpastas/arquivos, uma
+ * NOVA galáxia é construída a partir dos filhos daquele nó, recursivamente,
+ * em profundidade ilimitada. A navegação é uma pilha (stack) de níveis.
+ * Toda a lógica pura de transformação (nó → corpos, push/pop) vive em
+ * navigation.js, que pode ser testada sem GPU.
  *
  * NÃO conhece a câmera nem eventos de mouse — isso é responsabilidade do
  * componente. A simulação é puramente determinística.
@@ -22,16 +38,19 @@ export class SolarSystem {
 		this.starParts = [];    // objetos que compõem o sol (para ocultar no foco)
 		this.sun = null;        // refs do sol (ver createSun)
 		this.starLight = null;
+
+		// ── Drill-down (galáxia dentro de galáxia) ───────────────────────────
+		// Quando this.stack tem frames, estamos DENTRO de um tópico/pasta e o
+		// nível raiz (planetas/luas) está oculto. Cada frame = um nível.
+		this.stack = [];       // Frame[] (ver navigation.js)
+		this.drillBodies = {}; // key → { angle, mesh, label, orbitLine, radius, speed, inclination, body }
 	}
 
-	// ── Construção ───────────────────────────────────────────────────────────
+	// ── Construção do nível raiz (tracks → planetas) ─────────────────────────
 	build(tracks) {
 		this.clear();
-		this.scene.add(createStarfield());
-		const sun = createSun();
-		this.sun       = sun;
-		this.starParts = sun.parts;
-		this.starParts.forEach(o => this.scene.add(o));
+		this.stack = [];
+		this._addSunAndStars();
 
 		tracks.forEach((track, idx) => {
 			const profile     = PLANET_PROFILES[idx % PLANET_PROFILES.length];
@@ -54,16 +73,26 @@ export class SolarSystem {
 		});
 	}
 
+	/** Adiciona o campo de estrelas + o sol central (reutilizado por nível). */
+	_addSunAndStars() {
+		this.scene.add(createStarfield());
+		const sun = createSun();
+		this.sun       = sun;
+		this.starParts = sun.parts;
+		this.starParts.forEach(o => this.scene.add(o));
+	}
+
 	clear() {
 		this.scene.children.filter(o => o.userData.removable)
 			.forEach(o => disposeObject(this.scene, o));
 		this.clickables = [];
 		this.planets = {};
 		this.moons   = {};
+		this.drillBodies = {};
 		this.sun = null;
 	}
 
-	// ── Luas ─────────────────────────────────────────────────────────────────
+	// ── Luas (nível raiz: tópicos de um planeta) ─────────────────────────────
 	buildMoons(trackId) {
 		this.removeMoons(trackId);
 		const pd = this.planets[trackId];
@@ -108,7 +137,121 @@ export class SolarSystem {
 		const pd = this.planets[trackId];
 		if (!pd) return;
 		pd.topics = topics;
-		if (this.selectedPlanetId === trackId) this.buildMoons(trackId);
+		if (this.selectedPlanetId === trackId && !this.isDrilled()) this.buildMoons(trackId);
+	}
+
+	// ── Drill-down: galáxia dentro de galáxia ────────────────────────────────
+
+	/** true quando estamos dentro de um tópico/pasta (nível > raiz). */
+	isDrilled() { return this.stack.length > 0; }
+
+	/** Profundidade atual do drill (0 = nível raiz de tracks/luas). */
+	depth() { return this.stack.length; }
+
+	/** Trilha de nomes do nível atual (tópico → pastas), p/ o breadcrumb. */
+	breadcrumb() { return breadcrumbFromStack(this.stack); }
+
+	/**
+	 * Entra num tópico (lua). Se o tópico tem subpastas/arquivos, empilha o
+	 * frame raiz do tópico e constrói a primeira galáxia aninhada; retorna true.
+	 * Se o tópico é vazio/sem filhos, NÃO drilla (retorna false) — o chamador
+	 * deve abrir o painel como hoje.
+	 */
+	drillIntoTopic(topic) {
+		const bodies = bodiesFromTopic(topic);
+		if (!bodies) return false; // folha: abrir painel
+		this.stack = pushFrame([], frameForTopic(topic));
+		this._hideFocusedPlanet(true); // planeta em foco "abre" na galáxia aninhada
+		this._buildDrillLevel();
+		return true;
+	}
+
+	/**
+	 * Entra numa pasta (corpo "folder" drillable) do nível atual.
+	 * Empilha o frame e reconstrói a cena a partir dos filhos da pasta.
+	 */
+	drillIntoBody(body) {
+		if (!body?.drillable) return false;
+		this.stack = pushFrame(this.stack, frameForBody(body));
+		this._buildDrillLevel();
+		return true;
+	}
+
+	/**
+	 * Sobe um nível (voltar). Se ainda houver frames, reconstrói o nível pai;
+	 * se a pilha esvaziou, volta ao sistema de luas do tópico (nível raiz do
+	 * drill), reconstruindo as luas do planeta em foco.
+	 * @returns {boolean} true se ainda está drillado, false se voltou às luas.
+	 */
+	drillUp() {
+		this.stack = popFrame(this.stack);
+		this._clearDrill();
+		if (this.stack.length) {
+			this._buildDrillLevel();
+			return true;
+		}
+		// Voltou ao nível das luas do tópico selecionado
+		this._hideFocusedPlanet(false);
+		if (this.selectedPlanetId) this.buildMoons(this.selectedPlanetId);
+		return false;
+	}
+
+	/** Remove todos os corpos do nível de drill atual (dispose + limpa refs). */
+	_clearDrill() {
+		Object.values(this.drillBodies).forEach(d => {
+			[d.mesh, d.label, d.orbitLine].forEach(o => o && disposeObject(this.scene, o));
+		});
+		this.clickables = this.clickables.filter(c => c.type !== 'drill');
+		this.drillBodies = {};
+	}
+
+	/**
+	 * Constrói o nível de drill atual (topo da pilha): subpastas viram corpos
+	 * tipo "folder" (perfil de planeta), arquivos viram corpos "file" (perfil
+	 * de lua). Visual estável por semente (caminho). Dispõe o nível anterior
+	 * antes de construir, evitando vazamento de objetos Three.
+	 */
+	_buildDrillLevel() {
+		this._clearDrill();
+		// Enquanto drillado, as luas do tópico ficam ocultas (removidas).
+		if (this.selectedPlanetId) this.removeMoons(this.selectedPlanetId);
+
+		const bodies = bodiesForTopFrame(this.stack) ?? [];
+
+		bodies.forEach((body, idx) => {
+			const ring    = idx / 3;
+			const perRing = 5 + ring * 2;
+			const radius  = 34 + ring * 26;
+			const phase   = ((idx % perRing) / perRing) * Math.PI * 2;
+			const speed   = (0.0016 + idx * 0.0003) * (idx % 2 ? 1 : -1);
+			const inc     = (idx % 2 ? 1 : -1) * (0.05 + (idx % 3) * 0.06);
+			const seed    = body.seed ?? body.caminho ?? String(idx);
+
+			let mesh, label, orbitLine;
+			if (body.kind === 'folder') {
+				// Pasta → planeta (perfil estável por semente)
+				const profile = PLANET_PROFILES[seedFromString(seed) % PLANET_PROFILES.length];
+				const color   = profile.base ?? PLANET_COLORS[idx % PLANET_COLORS.length];
+				const pseudoTrack = { id: `drill::${seed}`, nome: body.nome };
+				({ mesh, label, orbitLine } = createPlanet(pseudoTrack, color, radius, inc, profile));
+			} else {
+				// Arquivo → lua (perfil estável por semente)
+				const profile = moonProfileFor(seed);
+				({ mesh, label, orbitLine } = createMoon({ nome: body.nome }, profile, radius, inc));
+			}
+			this.scene.add(mesh, label, orbitLine);
+
+			const key = `drill::${this.stack.length}::${idx}`;
+			this.drillBodies[key] = { angle: phase, mesh, label, orbitLine, radius, speed, inclination: inc, body };
+			this.clickables.push({ mesh, type: 'drill', id: key, body });
+		});
+	}
+
+	/** Maior raio orbital do nível de drill atual (p/ posicionar a câmera). */
+	drillExtent() {
+		const vals = Object.values(this.drillBodies);
+		if (!vals.length) return 40;
+		return vals.reduce((m, d) => Math.max(m, d.radius), 0);
 	}
 
 	// ── Simulação (chamada a cada frame) ───────────────────────────────────────
@@ -147,6 +290,19 @@ export class SolarSystem {
 			});
 		});
 
+		// ── Corpos do drill-down (galáxia aninhada), centrados em (0,0,0) ──────
+		Object.values(this.drillBodies).forEach(d => {
+			d.angle += d.speed * dt * 60;
+			const pos = orbitalPosition(d.angle, d.radius, d.inclination);
+			d.mesh.position.copy(pos);
+			d.label.position.copy(pos).y += (d.body.kind === 'folder' ? 11 : 7);
+			d.mesh.rotation.y += 0.004;
+			const pm = d.mesh.userData.planetMat;
+			if (pm) pm.uniforms.uTime.value = elapsed;
+			const mm = d.mesh.userData.moonMat;
+			if (mm) mm.uniforms.uTime.value = elapsed;
+		});
+
 		// ── Sol: anima o plasma do shader e rotaciona a fotosfera ─────────────
 		const sun = this.sun;
 		if (sun) {
@@ -176,10 +332,17 @@ export class SolarSystem {
 		});
 	}
 
-	/** Sai do modo foco: mostra tudo de volta. */
+	/** Sai do modo foco: mostra tudo de volta. Também desfaz qualquer drill. */
 	exitFocus() {
+		// Desfaz um eventual drill (volta a estrela/planetas visíveis).
+		if (this.isDrilled()) {
+			this._clearDrill();
+			this.stack = [];
+		}
 		this.focused = false;
+		const prev = this.selectedPlanetId;
 		this.selectedPlanetId = null;
+		if (prev) this.removeMoons(prev);
 
 		this.starParts.forEach(o => { o.visible = true; });
 		if (this.starLight) this.starLight.visible = true;
@@ -189,6 +352,15 @@ export class SolarSystem {
 			pd.label.visible     = true;
 			pd.orbitLine.visible = true;
 		});
+	}
+
+	/** Ao drillar, o planeta em foco e sua órbita somem (vira a "galáxia"). */
+	_hideFocusedPlanet(hidden) {
+		if (!this.selectedPlanetId) return;
+		const pd = this.planets[this.selectedPlanetId];
+		if (!pd) return;
+		pd.mesh.visible  = !hidden;
+		pd.label.visible = !hidden;
 	}
 
 	// ── Raycasting ──────────────────────────────────────────────────────────────

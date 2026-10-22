@@ -11,7 +11,7 @@
 	import 'prismjs/components/prism-csharp';
 	import 'prismjs/components/prism-dart';
 	import { base }            from '$app/paths';
-	import { getTrackList, getTopicsByTrack, getReadme, getFile } from '$lib/topicService.js';
+	import { getTrackList, getTopicsByTrack, getReadme, getFile, flattenFiles } from '$lib/topicService.js';
 	import { statusLabel } from '$lib/tracks.js';
 	import { PLANET_PROFILES } from '$lib/planetarium/constants.js';
 	import PlanetarySystem     from '$lib/components/PlanetarySystem.svelte';
@@ -47,6 +47,20 @@
 	// Esconde o "← início" quando um planeta está em foco (evita confusão com
 	// o gesto de voltar ao sistema completo).
 	let planetFocused = $state(false);
+	// Estado de navegação do drill-down (profundidade + breadcrumb) vindo do
+	// componente, para montar o controle "subir um nível" no HUD.
+	let navDepth      = $state(0);
+	let navCrumbs     = $state([]);
+
+	function handleNavChange(nav) {
+		planetFocused = nav.focused;
+		navDepth  = nav.depth ?? 0;
+		navCrumbs = nav.breadcrumb ?? [];
+	}
+
+	function subirUmNivel() {
+		planetaryRef?.drillUp();
+	}
 
 	const readmeCache  = new Map();
 	const contentCache = new Map();
@@ -84,24 +98,27 @@
 		requestAnimationFrame(() => requestAnimationFrame(() => { ready = true; }));
 	});
 
+	// Lista de arquivos (caminhos) do tópico. Prefere a árvore (FEAT-002),
+	// caindo para o `arquivos` plano quando a árvore não existe.
+	function topicFilePaths(topic) {
+		if (topic?.tree) return flattenFiles(topic.tree).map(f => f.caminho);
+		return topic?.arquivos ?? [];
+	}
+
 	// ── Seleção de tópico ─────────────────────────────────────────────────────
-	async function handleTopicSelect(topic) {
+	// `preselect` (opcional) = caminho de um arquivo-folha clicado na galáxia
+	// aninhada; abre o painel já naquele arquivo e mostra o README da parte.
+	async function handleTopicSelect(topic, preselect = null) {
 		selectedTopic = topic;
 		topicReadmeHtml = '';
 
-		const md = readmeCache.has(topic.id)
-			? readmeCache.get(topic.id)
-			: await getReadme(topic.pasta);
-		readmeCache.set(topic.id, md);
-
-		topicReadmeHtml = md
-			? marked.parse(md)
-			: '<p style="opacity:0.6; font-style:italic;">Sem conteúdo ainda para este tópico.</p>';
-
 		topicActiveFile = null;
 		topicFileContent = '';
-		const primeiro = topic.arquivos?.[0] ?? null;
-		if (primeiro) await selectTopicFile(primeiro);
+
+		const files = topicFilePaths(topic);
+		const alvo = (preselect && files.includes(preselect)) ? preselect : (files[0] ?? null);
+		if (alvo) await selectTopicFile(alvo);
+		else await loadReadmeFor(null); // tópico vazio: só README-raiz (ou nada)
 
 		topicPanelOpen = true;
 	}
@@ -109,11 +126,62 @@
 	async function selectTopicFile(filePath) {
 		topicActiveFile = filePath;
 		const key = `${selectedTopic?.id}::${filePath}`;
-		if (contentCache.has(key)) { topicFileContent = contentCache.get(key); return; }
-		const raw = await getFile(selectedTopic.pasta, filePath);
-		const content = raw ?? '// Arquivo não encontrado';
-		contentCache.set(key, content);
-		topicFileContent = content;
+		if (contentCache.has(key)) topicFileContent = contentCache.get(key);
+		else {
+			const raw = await getFile(selectedTopic.pasta, filePath);
+			const content = raw ?? '// Arquivo não encontrado';
+			contentCache.set(key, content);
+			topicFileContent = content;
+		}
+		// README "da parte": README da pasta que contém o arquivo, se houver;
+		// senão, o README-raiz do tópico.
+		await loadReadmeFor(filePath);
+	}
+
+	/**
+	 * Carrega o README relevante para um arquivo: procura no `tree` a pasta que
+	 * contém o arquivo (ou um ancestral com README), caindo para o README-raiz.
+	 */
+	async function loadReadmeFor(filePath) {
+		const readmePath = readmePathForFile(selectedTopic?.tree, filePath);
+		const cacheKey = `${selectedTopic?.id}::readme::${readmePath ?? 'root'}`;
+		let md;
+		if (readmeCache.has(cacheKey)) {
+			md = readmeCache.get(cacheKey);
+		} else {
+			md = readmePath
+				? await getFile(selectedTopic.pasta, readmePath)
+				: await getReadme(selectedTopic.pasta);
+			readmeCache.set(cacheKey, md);
+		}
+		topicReadmeHtml = md
+			? marked.parse(md)
+			: '<p style="opacity:0.6; font-style:italic;">Sem conteúdo ainda para este tópico.</p>';
+	}
+
+	/**
+	 * Caminho do README "da parte" para um arquivo: README da pasta mais
+	 * próxima (contendo o arquivo) que tenha README; senão o README-raiz do
+	 * tree (readme do nó raiz); senão null (usa getReadme padrão).
+	 */
+	function readmePathForFile(root, filePath) {
+		if (!root) return null;
+		let best = root.readme ? root.readme : null; // README-raiz como fallback
+		if (filePath) {
+			const walk = (node) => {
+				const containsHere = (node.arquivos ?? []).some(a => a.caminho === filePath);
+				if (containsHere && node.readme) best = node.readme;
+				for (const sub of node.subpastas ?? []) {
+					// Só desce em subpastas cujo caminho é prefixo do arquivo.
+					if (filePath.startsWith(sub.caminho + '/') || filePath === sub.caminho) {
+						if (sub.readme) best = sub.readme;
+						walk(sub);
+					}
+				}
+			};
+			walk(root);
+		}
+		return best;
 	}
 
 	async function copyTopicCode() {
@@ -149,6 +217,7 @@
 			tracks={planetTracks}
 			onTopicSelect={handleTopicSelect}
 			onFocusChange={(focused) => (planetFocused = focused)}
+			onNavChange={handleNavChange}
 			bind:this={planetaryRef}
 		/>
 	{/if}
@@ -189,6 +258,24 @@
 		<a class="back-home" href="{base}/">← início</a>
 	{/if}
 
+	<!-- Breadcrumb / "subir um nível" — aparece ao focar/drillar -->
+	{#if planetFocused}
+		<div class="nav-stack">
+			<button class="nav-up" onclick={subirUmNivel} aria-label="Subir um nível">
+				↑ subir um nível
+			</button>
+			{#if navCrumbs.length}
+				<div class="nav-crumbs">
+					<span class="nav-crumb-root">●</span>
+					{#each navCrumbs as crumb, i}
+						<span class="nav-sep">/</span>
+						<span class="nav-crumb" class:current={i === navCrumbs.length - 1}>{crumb}</span>
+					{/each}
+				</div>
+			{/if}
+		</div>
+	{/if}
+
 	<!-- HUD: título -->
 	<div class="hud-title">
 		<div class="hud-title-main">ROADMAP</div>
@@ -210,7 +297,7 @@
 
 	<!-- Hint de controles -->
 	<div class="planet-hint">
-		scroll para zoom · arrastar para navegar · clique num planeta
+		scroll para zoom · arrastar para navegar · clique p/ abrir uma galáxia · pastas abrem outra galáxia
 	</div>
 
 	<!-- Painel lateral do tópico (liquid glass) -->
@@ -238,10 +325,10 @@
 						{@html topicReadmeHtml}
 					</div>
 
-					{#if selectedTopic?.arquivos?.length}
+					{#if topicFilePaths(selectedTopic).length}
 						<div class="topic-code-block">
 							<div class="topic-file-tabs">
-								{#each selectedTopic.arquivos as f}
+								{#each topicFilePaths(selectedTopic) as f}
 									<button class="topic-file-tab" class:active={f === topicActiveFile}
 										onclick={() => selectTopicFile(f)}>{fileName(f)}</button>
 								{/each}
@@ -418,6 +505,53 @@
 		border-color: rgba(74, 136, 199, 0.6);
 		transform: translateY(-1px);
 	}
+
+	/* Breadcrumb / subir um nível (drill-down) */
+	.nav-stack {
+		position: absolute;
+		bottom: 16px;
+		left: 26px;
+		z-index: 16;
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		flex-wrap: wrap;
+		max-width: min(70vw, 680px);
+	}
+	.nav-up {
+		padding: 8px 18px;
+		border-radius: 99px;
+		border: 1px solid rgba(120, 160, 220, 0.3);
+		background: rgba(74, 136, 199, 0.18);
+		backdrop-filter: blur(8px);
+		color: #dce8f6;
+		font-size: 12px;
+		letter-spacing: 0.5px;
+		cursor: pointer;
+		font-family: 'JetBrains Mono', monospace;
+		transition: background 0.2s, transform 0.2s, border-color 0.2s;
+	}
+	.nav-up:hover {
+		background: rgba(74, 136, 199, 0.32);
+		border-color: rgba(74, 136, 199, 0.7);
+		transform: translateY(-1px);
+	}
+	.nav-crumbs {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 6px 12px;
+		border: 1px solid rgba(90, 120, 170, 0.2);
+		border-radius: 8px;
+		background: rgba(10, 16, 30, 0.5);
+		backdrop-filter: blur(6px);
+		font-family: 'JetBrains Mono', monospace;
+		font-size: 11px;
+	}
+	.nav-crumb-root { color: rgba(120, 170, 255, 0.7); }
+	.nav-sep { color: rgba(150, 170, 210, 0.35); }
+	.nav-crumb { color: rgba(190, 206, 230, 0.7); }
+	.nav-crumb.current { color: #eaf0f8; font-weight: 600; }
 
 	/* HUD — título */
 	.hud-title {
