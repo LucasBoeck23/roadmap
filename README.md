@@ -1,13 +1,21 @@
-# 🚀 Roadmap C# — Portfólio de Estudos
+# 🚀 Meu Roadmap de Estudos
 
-> Repositório-portfólio documentando minha evolução como desenvolvedor C#/.NET.
-> Cada tópico contém **exemplos práticos executáveis** com explicações detalhadas.
+> Repositório-portfólio onde documento minha evolução como desenvolvedor.
+> Cada tópico traz **exemplos práticos executáveis** com explicações detalhadas,
+> e tudo é navegável numa visualização interativa.
+
+### 🌐 Acesse ao vivo
+
+**[lucasboeck23.github.io/roadmap](https://lucasboeck23.github.io/roadmap/)**
+
+A versão web transforma o roadmap num planetário interativo: cada trilha é um
+planeta e cada tópico é uma lua que você pode explorar.
 
 ---
 
 ## 📌 Sobre
 
-Este não é apenas um repositório de estudos — é um **portfólio técnico vivo**.  
+Este não é apenas um repositório de estudos — é um **portfólio técnico vivo**.
 Cada pasta contém um mini-projeto que demonstra um conceito na prática, com:
 
 - ✅ Código executável (rode e veja funcionando)
@@ -15,79 +23,78 @@ Cada pasta contém um mini-projeto que demonstra um conceito na prática, com:
 - ✅ Comentários no código (acompanhe a lógica passo a passo)
 - ✅ Testes quando aplicável (prove que funciona)
 
+As trilhas crescem conforme avanço — hoje foco em **C#/.NET** e **Flutter/Dart**,
+mas o projeto é pensado para acomodar qualquer tecnologia que eu for estudando.
+
 ---
 
 ## 🗂️ Estrutura
 
 ```
 src/
-├── 01-Fundamentos/          → Tipos, nullables, strings, coleções, pattern matching
-├── 02-POO/                  → Classes, interfaces, generics, delegates, events
-├── 03-LINQ/                 → Queries, filtros, agrupamentos, projeções
-├── 04-AsyncAwait/           → Tasks, paralelismo, cancellation, streams
-├── 05-AspNetCore/           → APIs REST, DI, middlewares, validação
-├── 06-BancoDeDados/         → EF Core, migrations, Dapper, queries
-├── 07-Autenticacao/         → JWT, Identity, OAuth, policies
-├── 08-Testes/               → xUnit, Moq, integração, TDD
-├── 09-Arquitetura/          → SOLID, Clean Architecture, CQRS, DDD
-├── 10-Docker-CICD/          → Containers, GitHub Actions, deploy
-├── 11-Performance/          → Caching, profiling, Span<T>, GC
-├── 12-Microsservicos/       → gRPC, mensageria, Polly, sagas
-└── 13-Cloud/                → Azure Functions, App Service, Kubernetes
+├── csharp/                  → Trilha C# / .NET
+│   ├── 01-Fundamentos/      → Variáveis, condições, loops, funções, estruturas
+│   └── 02-POO/              → Classes, interfaces, generics, delegates, events
+│
+└── flutter/                 → Trilha Flutter / Dart
+    ├── 01-Dart-Basico/      → Sintaxe, tipos, funções, null safety
+    ├── 02-Widgets/          → Widgets básicos, stateless e stateful
+    └── 03-Layouts/          → Composição, constraints, responsividade
+
+web/
+└── roadmap-svelte/          → Visualização interativa (SvelteKit + Three.js)
+
+tests/                       → Testes dos exemplos
 ```
+
+> A estrutura é incremental: novos módulos e trilhas são adicionados conforme
+> avanço nos estudos.
 
 ---
 
-## 🎯 Progresso
+## 🧭 Trilhas
 
-| Nível | Módulo | Status |
-|-------|--------|--------|
-| 🟢 Trainee | 01-Fundamentos | ⬜ |
-| 🟢 Trainee | 02-POO | ⬜ |
-| 🔵 Júnior | 03-LINQ | ⬜ |
-| 🔵 Júnior | 04-AsyncAwait | ⬜ |
-| 🔵 Júnior | 05-AspNetCore | ⬜ |
-| 🔵 Júnior | 06-BancoDeDados | ⬜ |
-| 🔵 Júnior | 07-Autenticacao | ⬜ |
-| 🟡 Pleno | 08-Testes | ⬜ |
-| 🟡 Pleno | 09-Arquitetura | ⬜ |
-| 🟡 Pleno | 10-Docker-CICD | ⬜ |
-| 🟡 Pleno | 11-Performance | ⬜ |
-| 🔴 Sênior | 12-Microsservicos | ⬜ |
-| 🔴 Sênior | 13-Cloud | ⬜ |
+### 🟦 C# / .NET
+| Módulo | Status |
+|--------|--------|
+| 01-Fundamentos | � Em andamento |
+| 02-POO | ⬜ A fazer |
+
+### � Flutter / Dart
+| Módulo | Status |
+|--------|--------|
+| 01-Dart-Basico | � Em andamento |
+| 02-Widgets | ⬜ A fazer |
+| 03-Layouts | ⬜ A fazer |
 
 ---
 
 ## 🏃 Como Rodar
 
-### Pré-requisitos
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8) ou superior
-- [Docker](https://www.docker.com/) (para módulos 10+)
-- Um editor: VS Code, Visual Studio, ou Rider
+### Trilha C# / .NET
+Pré-requisito: [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8) ou superior.
 
-### Executar um exemplo
 ```bash
-# Navegue até o projeto desejado
-cd src/01-Fundamentos/TiposDeValorEReferencia
-
-# Execute
+cd src/csharp/01-Fundamentos/Projeto
 dotnet run
 ```
 
-### Executar testes
-```bash
-# Rodar todos os testes
-dotnet test
+### Trilha Flutter / Dart
+Pré-requisito: [Flutter SDK](https://docs.flutter.dev/get-started/install).
 
-# Rodar testes de um módulo específico
-dotnet test tests/08-Testes/
+```bash
+cd src/flutter/01-Dart-Basico
+# siga o README do módulo
 ```
 
----
+### Visualização web (planetário)
+Pré-requisito: [Node.js 20+](https://nodejs.org/).
 
-## 🧭 Roadmap Completo
-
-Veja o [roadmap detalhado com todos os tópicos](docs/ROADMAP.md) — organizado por nível com checkboxes de progresso.
+```bash
+cd web/roadmap-svelte
+npm install
+npm run dev
+```
 
 ---
 
@@ -100,28 +107,22 @@ Veja o [roadmap detalhado com todos os tópicos](docs/ROADMAP.md) — organizado
 
 ---
 
-## 🛠️ Tecnologias Utilizadas
+## 🛠️ Tecnologias
 
 | Categoria | Tecnologia |
 |-----------|-----------|
-| Linguagem | C# 12+ |
-| Framework | .NET 8+ |
-| Web | ASP.NET Core |
-| ORM | Entity Framework Core, Dapper |
-| Testes | xUnit, Moq, FluentAssertions |
-| Containers | Docker, Docker Compose |
-| CI/CD | GitHub Actions |
-| Mensageria | RabbitMQ, MassTransit |
-| Cloud | Azure |
-| Observabilidade | Serilog, OpenTelemetry |
+| Linguagens | C# 12+, Dart |
+| Frameworks | .NET 8+, Flutter |
+| Visualização web | SvelteKit, Three.js |
+| CI/CD | GitHub Actions + GitHub Pages |
 
 ---
 
 ## 📫 Contato
 
-<!-- Adicione seus links aqui -->
+- GitHub: [LucasBoeck23](https://github.com/LucasBoeck23)
+<!-- Adicione seus outros links aqui -->
 - LinkedIn: [seu-perfil]
-- GitHub: [seu-usuario]
 - Email: [seu-email]
 
 ---
