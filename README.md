@@ -41,8 +41,7 @@ src/
     ├── 02-Widgets/          → Widgets básicos, stateless e stateful
     └── 03-Layouts/          → Composição, constraints, responsividade
 
-web/
-└── roadmap-svelte/          → Visualização interativa (SvelteKit + Three.js)
+web/                         → Visualização interativa (SvelteKit + Three.js)
 
 tests/                       → Testes dos exemplos
 ```
@@ -91,7 +90,7 @@ cd src/flutter/01-Dart-Basico
 Pré-requisito: [Node.js 20+](https://nodejs.org/).
 
 ```bash
-cd web/roadmap-svelte
+cd web
 npm install
 npm run dev
 ```

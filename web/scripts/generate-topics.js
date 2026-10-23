@@ -2,9 +2,9 @@
 /**
  * generate-topics.js
  *
- * Substitui a MSBuild inline task do RoadmapApp.csproj.
- * Escaneia ../../src/, gera static/data/topics.json e
- * copia README.md + *.cs/*.dart para static/src/ (servidos como assets estáticos).
+ * Escaneia ../../src/ (as trilhas de estudo na raiz do repo), gera
+ * static/data/topics.json e copia README.md + *.cs/*.dart para static/src/
+ * (servidos como assets estáticos pelo SvelteKit).
  *
  * topics.json: { [trackId]: Topic[] }
  * Topic = {
@@ -30,7 +30,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const SRC_DIR     = join(__dirname, '..', '..', '..', 'src');
+const SRC_DIR     = join(__dirname, '..', '..', 'src');
 const OUT_JSON    = join(__dirname, '..', 'static', 'data', 'topics.json');
 const OUT_SRC     = join(__dirname, '..', 'static', 'src');
 const OUT_ZIP_DIR = join(__dirname, '..', 'static', 'downloads');

@@ -327,11 +327,11 @@
 		</footer>
 	</main>
 
-	<!-- ── PAINEL DE TÓPICO (overlay liquid glass) ──────────────── -->
+	<!-- ── MODAL DE TÓPICO (quase tela cheia: árvore à esquerda, conteúdo à direita) ── -->
 	{#if selected}
 		<div class="overlay" onclick={closePanel}
 			onkeydown={(e) => e.key === 'Escape' && closePanel()}
-			role="button" tabindex="-1" aria-label="Fechar painel">
+			role="button" tabindex="-1" aria-label="Fechar modal">
 			<div class="panel glass" onclick={(e) => e.stopPropagation()}
 				onkeydown={(e) => e.stopPropagation()}
 				role="dialog" aria-modal="true" tabindex="-1">
@@ -577,23 +577,29 @@
 		transition: background .25s, transform .25s; }
 	.planet-link:hover { background: rgba(167,139,250,.12); transform: translateY(-2px); }
 
-	/* ── OVERLAY / PANEL ──────────────────────────── */
+	/* ── OVERLAY / MODAL ──────────────────────────── */
 	.overlay {
 		position: fixed; inset: 0; z-index: 50;
-		display: flex; justify-content: flex-end;
-		background: rgba(4,5,12,.55);
-		backdrop-filter: blur(4px);
+		display: flex; align-items: center; justify-content: center;
+		padding: clamp(16px, 4vh, 48px);
+		background: rgba(4,5,12,.62);
+		backdrop-filter: blur(6px);
 		animation: fade .3s ease;
 	}
 	@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+	/* Modal grande, quase do tamanho da tela, centralizado. */
 	.panel {
-		width: min(760px, 94vw); height: 100%;
-		border-radius: 28px 0 0 28px; padding: 0;
+		width: min(1500px, 96vw); height: min(900px, 92vh);
+		border-radius: 24px; padding: 0;
 		display: flex; flex-direction: column;
-		animation: slide .4s cubic-bezier(.2,.8,.2,1);
-		background: rgba(14,16,26,.72);
+		animation: pop .4s cubic-bezier(.2,.8,.2,1);
+		background: rgba(14,16,26,.78);
+		overflow: hidden;
 	}
-	@keyframes slide { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+	@keyframes pop {
+		from { transform: scale(.96) translateY(12px); opacity: 0; }
+		to   { transform: scale(1) translateY(0);      opacity: 1; }
+	}
 	.panel-head { display: flex; justify-content: space-between; align-items: flex-start;
 		padding: 26px 28px 18px; border-bottom: 1px solid rgba(255,255,255,.07); }
 	.panel-head h2 { margin: 12px 0 0; font-size: 1.5rem; font-weight: 650; }
@@ -606,7 +612,8 @@
 		flex: 1;
 		min-height: 0;
 		display: grid;
-		grid-template-columns: minmax(200px, 260px) 1fr;
+		/* árvore sempre à esquerda (start), conteúdo ocupa o resto */
+		grid-template-columns: minmax(240px, 320px) 1fr;
 		gap: 0;
 	}
 
@@ -678,17 +685,20 @@
 	.empty { text-align: center; padding: 48px 20px; color: #8b93a9; }
 	.empty span { font-size: 2.4rem; display: block; margin-bottom: 12px; }
 
-	@media (max-width: 560px) {
-		.panel { border-radius: 0; width: 100vw; }
+	/* Em telas estreitas o modal vira tela cheia e as colunas empilham:
+	   árvore em cima (rolável) e conteúdo embaixo. */
+	@media (max-width: 760px) {
+		.overlay { padding: 0; }
+		.panel { border-radius: 0; width: 100vw; height: 100vh; max-height: 100vh; }
 		.panel-body {
 			grid-template-columns: 1fr;
 			grid-template-rows: auto 1fr;
-			overflow-y: auto;
+			overflow: hidden;
 		}
 		.tree-pane {
 			border-right: none;
 			border-bottom: 1px solid rgba(255,255,255,.07);
-			max-height: 38vh;
+			max-height: 34vh;
 		}
 	}
 </style>
