@@ -83,13 +83,13 @@ const fragmentShader = /* glsl */ `
 	}
 	float fbm(vec3 p){
 		float f = 0.0, amp = 0.5;
-		for (int i = 0; i < 6; i++) { f += amp * snoise(p); p *= 2.03; amp *= 0.5; }
+		for (int i = 0; i < 4; i++) { f += amp * snoise(p); p *= 2.03; amp *= 0.5; }
 		return f;
 	}
 	// Ridged (para veios de lava / fraturas de gelo)
 	float ridged(vec3 p){
 		float f = 0.0, amp = 0.5;
-		for (int i = 0; i < 5; i++) { f += amp * (1.0 - abs(snoise(p))); p *= 2.1; amp *= 0.5; }
+		for (int i = 0; i < 4; i++) { f += amp * (1.0 - abs(snoise(p))); p *= 2.1; amp *= 0.5; }
 		return f;
 	}
 
@@ -295,12 +295,12 @@ const moonFragment = /* glsl */ `
 	}
 	float fbm(vec3 p){
 		float f = 0.0, amp = 0.5;
-		for (int i = 0; i < 5; i++) { f += amp * snoise(p); p *= 2.05; amp *= 0.5; }
+		for (int i = 0; i < 4; i++) { f += amp * snoise(p); p *= 2.05; amp *= 0.5; }
 		return f;
 	}
 	float ridged(vec3 p){
 		float f = 0.0, amp = 0.5;
-		for (int i = 0; i < 5; i++) { f += amp * (1.0 - abs(snoise(p))); p *= 2.1; amp *= 0.5; }
+		for (int i = 0; i < 4; i++) { f += amp * (1.0 - abs(snoise(p))); p *= 2.1; amp *= 0.5; }
 		return f;
 	}
 

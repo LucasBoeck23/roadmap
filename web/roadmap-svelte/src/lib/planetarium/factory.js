@@ -6,6 +6,18 @@ import { createPlanetMaterial, createMoonMaterial } from './planetShader.js';
 
 const SUN_RADIUS = 13; // raio base do sol
 
+// ── Geometrias compartilhadas ──────────────────────────────────────────────
+// Esferas pequenas na tela não precisam de malha densa; 48×48 já fica liso num
+// planeta de raio 7 e 32×24 numa lua de raio 3.5. Compartilhar uma única
+// geometria entre todos os planetas (e outra entre as luas) reduce drasticamente
+// vértices enviados à GPU e evita recriar buffers a cada build.
+const PLANET_GEOMETRY = new THREE.SphereGeometry(7, 48, 48);
+const MOON_GEOMETRY   = new THREE.SphereGeometry(3.5, 32, 24);
+// Marca geometrias compartilhadas para o dispose NÃO liberá-las (senão o
+// próximo build — ou os demais corpos — ficariam sem buffer na GPU).
+PLANET_GEOMETRY.userData.shared = true;
+MOON_GEOMETRY.userData.shared = true;
+
 /** Campo de estrelas de fundo (3000 pontos aleatórios). */
 export function createStarfield() {
 	const n = 3000, pos = new Float32Array(n * 3);
@@ -33,7 +45,7 @@ export function createSun() {
 
 	// Superfície: shader de plasma animado
 	const material = createSunMaterial();
-	const surface = new THREE.Mesh(new THREE.SphereGeometry(SUN_RADIUS, 96, 96), material);
+	const surface = new THREE.Mesh(new THREE.SphereGeometry(SUN_RADIUS, 64, 64), material);
 	group.add(surface);
 
 	// Corona moderada (Fase 1 — estrela estável): glow discreto + halo suave
@@ -60,12 +72,11 @@ export function createSun() {
  * @returns { mesh, label, orbitLine }
  */
 export function createPlanet(track, color, radius, inclination, profile = null) {
-	const PR = 7;
 	// Superfície procedural na GPU (shader). O próprio shader faz a iluminação
 	// e o rim light atmosférico, então usamos ShaderMaterial direto.
 	const prof = profile ?? { kind: 'gas', palette: [color, color, color, color] };
 	const material = createPlanetMaterial(prof);
-	const mesh = new THREE.Mesh(new THREE.SphereGeometry(PR, 96, 96), material);
+	const mesh = new THREE.Mesh(PLANET_GEOMETRY, material);
 	mesh.userData.removable = true;
 	mesh.userData.planetId  = track.id;
 	mesh.userData.planetMat = material; // referência p/ animar uTime / uLightDir
@@ -86,9 +97,8 @@ export function createPlanet(track, color, radius, inclination, profile = null) 
  * @returns { mesh, label, orbitLine, material }
  */
 export function createMoon(topic, profile, radius, inclination) {
-	const MR = 3.5;
 	const material = createMoonMaterial(profile);
-	const mesh = new THREE.Mesh(new THREE.SphereGeometry(MR, 48, 48), material);
+	const mesh = new THREE.Mesh(MOON_GEOMETRY, material);
 	mesh.userData.removable = true;
 	mesh.userData.moonMat   = material; // p/ animar uTime
 

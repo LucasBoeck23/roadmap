@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { PLANET_COLORS, PLANET_PROFILES, moonProfileFor, seedFromString } from './constants.js';
-import { orbitalPosition } from './orbit.js';
+import { PLANET_COLORS, PLANET_PROFILES, MOON_PROFILES, moonProfileFor, seedFromString } from './constants.js';
+import { orbitalPosition, orbitalPositionInto } from './orbit.js';
 import { createStarfield, createSun, createPlanet, createMoon } from './factory.js';
 import { disposeObject } from './dispose.js';
 import {
@@ -44,6 +44,13 @@ export class SolarSystem {
 		// nível raiz (planetas/luas) está oculto. Cada frame = um nível.
 		this.stack = [];       // Frame[] (ver navigation.js)
 		this.drillBodies = {}; // key → { angle, mesh, label, orbitLine, radius, speed, inclination, body }
+
+		// Vetor de trabalho reutilizado no update() — evita alocar um Vector3
+		// novo por corpo por frame (churn de GC → microtravadas).
+		this._tmp = new THREE.Vector3();
+
+		// Handle do requestAnimationFrame da construção incremental de luas.
+		this._moonBuildRAF = null;
 	}
 
 	// ── Construção do nível raiz (tracks → planetas) ─────────────────────────
@@ -82,7 +89,34 @@ export class SolarSystem {
 		this.starParts.forEach(o => this.scene.add(o));
 	}
 
+	/**
+	 * Pré-compila os programas de shader na GPU ANTES do primeiro clique.
+	 * three.js compila um ShaderMaterial só na 1ª vez que ele é renderizado —
+	 * e compilar é síncrono, travando a thread. Como todas as luas usam o mesmo
+	 * programa (só mudam uniforms), basta compilar UMA lua de exemplo aqui para
+	 * que, ao entrar no planeta, nenhuma compilação aconteça no meio da interação.
+	 *
+	 * @param {THREE.WebGLRenderer} renderer
+	 * @param {THREE.Camera}        camera
+	 */
+	warmup(renderer, camera) {
+		if (!renderer) return;
+		// Compila o que já está na cena (sol, planetas, estrelas).
+		renderer.compile(this.scene, camera);
+
+		// Compila o programa de lua com um mesh temporário invisível.
+		const sample = MOON_PROFILES[0];
+		const { mesh, label, orbitLine } = createMoon(
+			{ nome: '·' }, sample, 32, 0.1
+		);
+		mesh.visible = label.visible = orbitLine.visible = false;
+		this.scene.add(mesh, label, orbitLine);
+		renderer.compile(this.scene, camera);
+		[mesh, label, orbitLine].forEach(o => disposeObject(this.scene, o));
+	}
+
 	clear() {
+		this._cancelMoonBuild();
 		this.scene.children.filter(o => o.userData.removable)
 			.forEach(o => disposeObject(this.scene, o));
 		this.clickables = [];
@@ -93,31 +127,70 @@ export class SolarSystem {
 	}
 
 	// ── Luas (nível raiz: tópicos de um planeta) ─────────────────────────────
-	buildMoons(trackId) {
+	/** Calcula os parâmetros orbitais de uma lua pelo índice (determinístico). */
+	_moonParams(trackId, topic, idx) {
+		const ring    = idx / 3;
+		const perRing = 5 + ring * 2;
+		return {
+			radius:      32 + ring * 26,
+			phase:       ((idx % perRing) / perRing) * Math.PI * 2,
+			speed:       (0.0015 + idx * 0.0003) * (idx % 2 ? 1 : -1),
+			inclination: (idx % 2 ? 1 : -1) * (0.05 + (idx % 3) * 0.06),
+			profile:     moonProfileFor(topic.id ?? `${trackId}::${idx}`)
+		};
+	}
+
+	/** Cria uma única lua e a registra. Usado pela construção incremental. */
+	_spawnMoon(trackId, topic, idx) {
+		const { radius, phase, speed, inclination, profile } = this._moonParams(trackId, topic, idx);
+		const { mesh, label, orbitLine } = createMoon(topic, profile, radius, inclination);
+		this.scene.add(mesh, label, orbitLine);
+
+		const key = `${trackId}::${idx}`;
+		this.moons[key] = { angle: phase, mesh, label, orbitLine, radius, speed, inclination, topic };
+		this.clickables.push({ mesh, type: 'moon', id: key, topic });
+	}
+
+	/**
+	 * Constrói as luas de forma INCREMENTAL — algumas por frame — em vez de
+	 * todas num único frame. Criar uma lua envolve montar um ShaderMaterial e
+	 * um label em canvas; fazer N de uma vez congelava a thread no clique.
+	 * Espalhar no tempo mantém a entrada no planeta fluida.
+	 *
+	 * @param {number} perFrame  quantas luas criar por frame
+	 */
+	buildMoons(trackId, perFrame = 2) {
 		this.removeMoons(trackId);
+		this._cancelMoonBuild();
 		const pd = this.planets[trackId];
 		if (!pd || !pd.topics.length) return;
 
-		pd.topics.forEach((topic, idx) => {		
-			const ring    = idx / 3
-			const perRing = 5 + ring * 2;
-			const radius  = 32 + ring * 26;
-			const phase   = ((idx % perRing) / perRing) * Math.PI * 2;
-			const speed   = (0.0015 + idx * 0.0003) * (idx % 2 ? 1 : -1);
-			const inc     = (idx % 2 ? 1 : -1) * (0.05 + (idx % 3) * 0.06);
-			// Perfil de lua estável por semente do tópico (id, ou track::idx)
-			const profile = moonProfileFor(topic.id ?? `${trackId}::${idx}`);
+		const topics = pd.topics;
+		let i = 0;
+		const step = () => {
+			// Se o usuário trocou de planeta / saiu do foco, aborta.
+			if (this.selectedPlanetId !== trackId) { this._moonBuildRAF = null; return; }
+			const end = Math.min(i + perFrame, topics.length);
+			for (; i < end; i++) this._spawnMoon(trackId, topics[i], i);
+			if (i < topics.length) {
+				this._moonBuildRAF = requestAnimationFrame(step);
+			} else {
+				this._moonBuildRAF = null;
+			}
+		};
+		this._moonBuildRAF = requestAnimationFrame(step);
+	}
 
-			const { mesh, label, orbitLine } = createMoon(topic, profile, radius, inc);
-			this.scene.add(mesh, label, orbitLine);
-
-			const key = `${trackId}::${idx}`;
-			this.moons[key] = { angle: phase, mesh, label, orbitLine, radius, speed, inclination: inc, topic };
-			this.clickables.push({ mesh, type: 'moon', id: key, topic });
-		});
+	/** Cancela uma construção incremental de luas em andamento. */
+	_cancelMoonBuild() {
+		if (this._moonBuildRAF != null) {
+			cancelAnimationFrame(this._moonBuildRAF);
+			this._moonBuildRAF = null;
+		}
 	}
 
 	removeMoons(trackId) {
+		this._cancelMoonBuild();
 		Object.keys(this.moons).filter(k => k.startsWith(trackId + '::')).forEach(k => {
 			const d = this.moons[k];
 			[d.mesh, d.label, d.orbitLine].forEach(o => disposeObject(this.scene, o));
@@ -256,14 +329,15 @@ export class SolarSystem {
 
 	// ── Simulação (chamada a cada frame) ───────────────────────────────────────
 	update(dt, elapsed) {
+		const tmp = this._tmp;
 		Object.values(this.planets).forEach(pd => {
 			const isFocusTarget = this.focused && pd.track.id === this.selectedPlanetId;
 			let wpos;
 			if (isFocusTarget) {
-				wpos = new THREE.Vector3(0, 0, 0);
+				wpos = tmp.set(0, 0, 0);
 			} else {
 				pd.angle += pd.speed * dt * 60;
-				wpos = orbitalPosition(pd.angle, pd.radius, pd.inclination);
+				wpos = orbitalPositionInto(tmp, pd.angle, pd.radius, pd.inclination);
 			}
 			pd.mesh.position.copy(wpos);
 			pd.label.position.copy(wpos).y += 11;
@@ -281,7 +355,7 @@ export class SolarSystem {
 			Object.keys(this.moons).filter(k => k.startsWith(pd.track.id + '::')).forEach(k => {
 				const md = this.moons[k];
 				md.angle += md.speed * dt * 60;
-				const mpos = orbitalPosition(md.angle, md.radius, md.inclination);
+				const mpos = orbitalPositionInto(tmp, md.angle, md.radius, md.inclination);
 				md.mesh.position.copy(mpos);
 				md.label.position.copy(mpos).y += 7;
 				md.mesh.rotation.y += 0.004;

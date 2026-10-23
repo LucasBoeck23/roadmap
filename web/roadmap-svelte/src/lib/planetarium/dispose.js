@@ -5,7 +5,10 @@
  */
 export function disposeObject(scene, obj) {
 	obj.traverse(child => {
-		child.geometry?.dispose();
+		// Geometrias marcadas como compartilhadas (ex.: a esfera única usada por
+		// todos os planetas/luas) NÃO devem ser liberadas aqui — outros objetos
+		// ainda as usam e o próximo build as reaproveita.
+		if (child.geometry && !child.geometry.userData?.shared) child.geometry.dispose();
 		[child.material].flat().forEach(m => m?.dispose());
 	});
 	scene.remove(obj);

@@ -34,12 +34,19 @@
 	function initThree() {
 		const w = containerEl.clientWidth, h = containerEl.clientHeight;
 
-		renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: true });
+		// antialias:false — com EffectComposer o AA do renderer é ignorado; o
+		// serrilhado é tratado pelo MSAA do render target abaixo. Deixar true só
+		// consumia memória/banda sem efeito.
+		renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: false, powerPreference: 'high-performance' });
 		renderer.setSize(w, h, false);
-		renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+		// Teto de 1.5 no pixelRatio: em telas retina (dpr 2+) o custo de fill-rate
+		// cresce com o quadrado do dpr. 1.5 mantém nitidez e corta ~44% de pixels
+		// vs. dpr 2 — o maior ganho de GPU no planetário.
+		renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
 		renderer.setClearColor(0x000000);
-		renderer.shadowMap.enabled = true;
-		renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+		// shadowMap estava habilitado mas nenhuma luz projeta sombra
+		// (castShadow=false) e nenhum material as recebe — era custo morto.
+		renderer.shadowMap.enabled = false;
 
 		scene = new THREE.Scene();
 		scene.background = new THREE.Color(0x000000); // fundo preto garantido
@@ -61,9 +68,11 @@
 		// Render target com MSAA (samples) → o EffectComposer, por padrão, não
 		// tem antialiasing; sem isso as bordas das esferas ficam serrilhadas
 		// mesmo com antialias:true no renderer.
-		const dpr = Math.min(devicePixelRatio, 2);
+		const dpr = Math.min(devicePixelRatio, 1.5);
+		// MSAA 2x (era 4x): suaviza as bordas das esferas com metade do custo de
+		// fill-rate do render target em half-float.
 		const rt = new THREE.WebGLRenderTarget(w * dpr, h * dpr, {
-			samples: 4,
+			samples: 2,
 			type: THREE.HalfFloatType
 		});
 		composer = new EffectComposer(renderer, rt);
@@ -75,16 +84,35 @@
 		composer.addPass(bloomPass);
 		composer.addPass(new OutputPass());
 
+		// Pré-compila os shaders (inclui o programa de lua) para o 1º clique num
+		// planeta não travar com a compilação síncrona de vários materiais.
+		solar.warmup(renderer, orbitalCam.camera);
+
 		animate();
 	}
 
 	function animate() {
 		animId = requestAnimationFrame(animate);
-		const dt = clock.getDelta();
+		// Clampa o dt: ao voltar de uma aba oculta, getDelta() pode devolver
+		// vários segundos de uma vez, dando um "salto" na simulação. Limitar a
+		// ~1/30s mantém o movimento contínuo e previsível.
+		const dt = Math.min(clock.getDelta(), 0.033);
 		const t  = clock.getElapsedTime();
 		solar.update(dt, t);        // simulação + ciclo do sol
 		orbitalCam.lerp(dt);        // câmera
 		composer.render();          // render com bloom
+	}
+
+	// Pausa o loop quando a aba fica oculta — sem isso o planetário continua
+	// queimando GPU/CPU em segundo plano.
+	function onVisibilityChange() {
+		if (document.hidden) {
+			cancelAnimationFrame(animId);
+			animId = null;
+		} else if (animId == null) {
+			clock.getDelta(); // descarta o tempo acumulado enquanto oculto
+			animate();
+		}
 	}
 
 	// ── Interação ──────────────────────────────────────────────────────────────
@@ -201,7 +229,11 @@
 		const dist    = Math.max(MIN_D, Math.min(MAX_D, extent * 1.8 + 30));
 
 		orbitalCam.focusOn(new THREE.Vector3(0, 0, 0), dist);
-		setTimeout(() => solar.buildMoons(id), 200);
+		// Com os shaders pré-compilados (warmup) e a criação incremental
+		// (poucas luas por frame), não há mais o pico de trabalho que travava o
+		// clique — as luas podem começar a surgir já no próximo frame, enquanto
+		// a câmera faz o foco. Sem o setTimeout de 200ms.
+		solar.buildMoons(id);
 		onFocusChange?.(true);
 		emitNav();
 	}
@@ -237,15 +269,22 @@
 		if (key === builtKey) return;
 		builtKey = key;
 		solar.build(tracks);
+		// Reaquece os shaders após reconstruir (o clear() descarta materiais).
+		if (renderer && orbitalCam) solar.warmup(renderer, orbitalCam.camera);
 	});
 
 	export function setTrackTopics(trackId, topics) {
 		solar?.setTopics(trackId, topics);
 	}
 
-	onMount(() => { initThree(); setupResize(); });
+	onMount(() => {
+		initThree();
+		setupResize();
+		document.addEventListener('visibilitychange', onVisibilityChange);
+	});
 	onDestroy(() => {
-		cancelAnimationFrame(animId);
+		document.removeEventListener('visibilitychange', onVisibilityChange);
+		if (animId != null) cancelAnimationFrame(animId);
 		resizeObserver?.disconnect();
 		composer?.dispose?.();
 		renderer?.dispose();

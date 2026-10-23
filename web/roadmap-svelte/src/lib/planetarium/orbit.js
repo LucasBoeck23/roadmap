@@ -21,6 +21,24 @@ export function orbitalPosition(angle, radius, inclination, center = new THREE.V
 }
 
 /**
+ * Igual a `orbitalPosition`, mas escreve o resultado em `out` em vez de alocar
+ * um Vector3 novo. Para uso no loop de simulação (um por frame por corpo), onde
+ * alocar gera churn de GC e microtravadas.
+ *
+ * @param {THREE.Vector3} out    vetor de destino (reutilizado)
+ * @returns {THREE.Vector3} o próprio `out`
+ */
+export function orbitalPositionInto(out, angle, radius, inclination, cx = 0, cy = 0, cz = 0) {
+	const lx = Math.cos(angle) * radius;
+	const lz = Math.sin(angle) * radius;
+	return out.set(
+		cx + lx,
+		cy + lz * Math.sin(inclination),
+		cz + lz * Math.cos(inclination)
+	);
+}
+
+/**
  * Gera os pontos de uma volta completa da órbita.
  * Usado tanto para desenhar a linha quanto para atualizá-la quando o pai se move.
  */
