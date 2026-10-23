@@ -45,9 +45,10 @@ export class SolarSystem {
 		this.stack = [];       // Frame[] (ver navigation.js)
 		this.drillBodies = {}; // key → { angle, mesh, label, orbitLine, radius, speed, inclination, body }
 
-		// Vetor de trabalho reutilizado no update() — evita alocar um Vector3
-		// novo por corpo por frame (churn de GC → microtravadas).
+		// Vetores de trabalho reutilizados (update + raycasting) — evitam alocar
+		// Vector3 novos por frame/clique (churn de GC).
 		this._tmp = new THREE.Vector3();
+		this._pickVec = new THREE.Vector3();
 
 		// Handle do requestAnimationFrame da construção incremental de luas.
 		this._moonBuildRAF = null;
@@ -438,10 +439,42 @@ export class SolarSystem {
 	}
 
 	// ── Raycasting ──────────────────────────────────────────────────────────────
-	/** Retorna o item clicável atingido pelo raio, ou null. */
+	// Raio visual das esferas (ver factory.js). Usado para encolher a zona
+	// clicável do planeta — só o PLANETA, não as luas.
+	static PLANET_RADIUS = 7;
+	// Fração do raio do planeta que conta como clique válido (evita cliques
+	// "de raspão" na borda). 0.72 ≈ 72% central.
+	static PLANET_HIT_FRACTION = 0.72;
+
+	/**
+	 * Retorna o item clicável atingido pelo raio, ou null.
+	 *
+	 * Para PLANETAS, exige que o ponto de impacto esteja na região central da
+	 * esfera (dentro de PLANET_HIT_FRACTION do raio, medido perpendicular ao
+	 * raio da câmera) — reduz missclicks na borda. Luas mantêm a área cheia.
+	 */
 	pick(raycaster) {
 		const hits = raycaster.intersectObjects(this.clickables.map(c => c.mesh), false);
 		if (!hits.length) return null;
-		return this.clickables.find(c => c.mesh === hits[0].object) ?? null;
+
+		for (const hit of hits) {
+			const item = this.clickables.find(c => c.mesh === hit.object);
+			if (!item) continue;
+
+			if (item.type === 'planet') {
+				// Distância do ponto de impacto ao centro do planeta, projetada
+				// no plano perpendicular ao raio (ignora a profundidade). Perto
+				// da borda da esfera essa distância tende ao raio; no centro, a 0.
+				const center = hit.object.getWorldPosition(this._tmp);
+				const toHit  = this._pickVec.subVectors(hit.point, center);
+				const along  = toHit.dot(raycaster.ray.direction);
+				// componente perpendicular ao raio
+				const perp = Math.sqrt(Math.max(0, toHit.lengthSq() - along * along));
+				const limit = SolarSystem.PLANET_RADIUS * SolarSystem.PLANET_HIT_FRACTION;
+				if (perp > limit) continue; // clique na borda → ignora este planeta
+			}
+			return item;
+		}
+		return null;
 	}
 }

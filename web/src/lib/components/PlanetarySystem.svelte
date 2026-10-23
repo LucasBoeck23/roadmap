@@ -115,31 +115,110 @@
 		}
 	}
 
-	// ── Interação ──────────────────────────────────────────────────────────────
-	let pointer = { down: false, x: 0, y: 0, button: 0 };
+	// ── Interação (mouse + touch) ───────────────────────────────────────────────
+	// Rastreamos todos os ponteiros ativos para suportar gestos de 2 dedos:
+	//   1 dedo/mouse  → orbitar (ou pan com Shift no desktop)
+	//   2 dedos       → pinça (zoom) + arrastar o ponto médio (pan)
+	let pointer  = { down: false, x: 0, y: 0, button: 0, totalMove: 0 };
+	const active = new Map();      // pointerId → { x, y }
+	let pinchPrevDist = 0;         // distância entre os 2 dedos no frame anterior
+	let pinchPrevMid  = { x: 0, y: 0 };
+	let downItem = null;           // corpo sob o cursor no pointerdown (p/ confirmar clique)
+
+	// Faz o raycast num ponto de tela e retorna o item clicável (ou null).
+	function pickAt(clientX, clientY) {
+		const rect = canvasEl.getBoundingClientRect();
+		mouseVec.x =  ((clientX - rect.left) / rect.width)  * 2 - 1;
+		mouseVec.y = -((clientY - rect.top)  / rect.height) * 2 + 1;
+		raycaster.setFromCamera(mouseVec, orbitalCam.camera);
+		return solar.pick(raycaster);
+	}
+
+	function pointersArray() { return [...active.values()]; }
+	function dist2(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+	function mid2(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
 
 	function onPointerDown(e) {
-		// Botão direito (2) não faz nada — evita quebrar a navegação.
-		if (e.button === 2) return;
-		pointer.down = true;
-		pointer.x = e.clientX; pointer.y = e.clientY;
-		pointer.button = e.button;
+		if (e.button === 2) return;               // botão direito: ignora
+		canvasEl.setPointerCapture?.(e.pointerId);
+		active.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+		if (active.size === 2) {
+			// Começou um gesto de pinça: memoriza distância e ponto médio.
+			const [p1, p2] = pointersArray();
+			pinchPrevDist = dist2(p1, p2);
+			pinchPrevMid  = mid2(p1, p2);
+		} else {
+			pointer.down = true;
+			pointer.x = e.clientX; pointer.y = e.clientY;
+			pointer.button = e.button;
+			pointer.totalMove = 0;
+			// Memoriza o corpo sob o cursor: o clique só confirma se soltar no MESMO.
+			downItem = e.button === 0 ? pickAt(e.clientX, e.clientY) : null;
+		}
 	}
 
 	function onPointerMove(e) {
+		if (!active.has(e.pointerId)) return;
+		active.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+		if (active.size >= 2) {
+			// ── Dois dedos: pinça (zoom) + pan do ponto médio ──────────────────
+			const [p1, p2] = pointersArray();
+			const d   = dist2(p1, p2);
+			const mid = mid2(p1, p2);
+
+			if (pinchPrevDist > 0) {
+				// afastar os dedos (d>prev) = aproximar a câmera → deltaY negativo
+				const delta = (pinchPrevDist - d) * 2.2;
+				orbitalCam.zoom(delta);
+			}
+			// arrastar os dois dedos juntos = pan
+			orbitalCam.pan(mid.x - pinchPrevMid.x, mid.y - pinchPrevMid.y);
+
+			pinchPrevDist = d;
+			pinchPrevMid  = mid;
+			return;
+		}
+
 		if (!pointer.down) return;
 		const dx = e.clientX - pointer.x;
 		const dy = e.clientY - pointer.y;
 		pointer.x = e.clientX; pointer.y = e.clientY;
+		pointer.totalMove += Math.abs(dx) + Math.abs(dy);
 
 		if (e.shiftKey) orbitalCam.pan(dx, dy);
 		else            orbitalCam.orbit(dx, dy);
 	}
 
 	function onPointerUp(e) {
-		const moved = Math.abs(e.clientX - pointer.x) + Math.abs(e.clientY - pointer.y);
+		const wasTwoFinger = active.size >= 2;
+		active.delete(e.pointerId);
+		canvasEl.releasePointerCapture?.(e.pointerId);
+
+		// Ao soltar durante/depois de um gesto de 2 dedos, reseta a pinça e não
+		// dispara clique (evita abrir um planeta sem querer ao fechar a pinça).
+		if (wasTwoFinger || active.size >= 1) {
+			pinchPrevDist = 0;
+			pointer.down = false;
+			downItem = null;
+			return;
+		}
+
 		pointer.down = false;
-		if (moved < 5) handleClick(e);
+		// Confirma o clique só se:
+		//  (a) mal se moveu (não foi arrasto), E
+		//  (b) soltou sobre o MESMO corpo onde pressionou (down == up).
+		// Isso evita abrir um planeta ao arrastar a câmera e soltar sobre ele.
+		if (pointer.totalMove < 8 && downItem) {
+			const upItem = pickAt(e.clientX, e.clientY);
+			if (upItem && sameItem(upItem, downItem)) confirmClick(upItem);
+		}
+		downItem = null;
+	}
+
+	function sameItem(a, b) {
+		return a.type === b.type && (a.id === b.id || a.mesh === b.mesh);
 	}
 
 	function onWheel(e) {
@@ -147,71 +226,18 @@
 		orbitalCam.zoom(e.deltaY);
 	}
 
-	function handleClick(e) {
-		const rect = canvasEl.getBoundingClientRect();
-		mouseVec.x =  ((e.clientX - rect.left) / rect.width)  * 2 - 1;
-		mouseVec.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
-		raycaster.setFromCamera(mouseVec, orbitalCam.camera);
-
-		const item = solar.pick(raycaster);
-		if (!item) return;
-		if (item.type === 'planet')      selectPlanet(item.id);
-		else if (item.type === 'moon')   openTopicOrDrill(item.topic);
-		else if (item.type === 'drill')  openBodyOrDrill(item.body);
-	}
-
-	// ── Drill-down (galáxia dentro de galáxia) ───────────────────────────────
-	/**
-	 * Clique numa lua (tópico): se tem subpastas/arquivos, entra na galáxia
-	 * aninhada; senão, abre o painel do tópico como hoje.
-	 */
-	function openTopicOrDrill(topic) {
-		if (solar.drillIntoTopic(topic)) {
-			transitionToDrill();
-			emitNav();
-		} else {
-			onTopicSelect?.(topic);
-		}
+	function confirmClick(item) {
+		if (item.type === 'planet')    selectPlanet(item.id);
+		else if (item.type === 'moon') onTopicSelect?.(item.topic);
 	}
 
 	/**
-	 * Clique num corpo do drill: pasta com filhos → entra mais fundo;
-	 * folha (arquivo, ou pasta vazia) → abre o painel com o arquivo
-	 * pré-selecionado e o README da parte.
+	 * Sai do foco do planeta, voltando ao sistema completo. Exposto para o HUD
+	 * ("voltar ao sistema"). Mantém o nome drillUp por compatibilidade com o
+	 * chamador, mas não há mais drill-down — clicar numa lua abre o modal.
 	 */
-	function openBodyOrDrill(body) {
-		if (body.drillable && solar.drillIntoBody(body)) {
-			transitionToDrill();
-			emitNav();
-		} else {
-			// Folha: abre o painel. Para um arquivo, passa o caminho p/ pré-seleção.
-			onTopicSelect?.(body.topic, body.file ?? null);
-		}
-	}
-
-	/** Reposiciona a câmera para enquadrar a galáxia aninhada recém-construída. */
-	function transitionToDrill() {
-		const extent = solar.drillExtent();
-		const dist   = Math.max(55, Math.min(220, extent * 1.9 + 34));
-		orbitalCam.focusOn(new THREE.Vector3(0, 0, 0), dist);
-	}
-
-	/** Sobe um nível no drill (chamado pelo HUD "subir um nível"). */
 	export function drillUp() {
-		if (!solar?.isDrilled()) { deselectPlanet(); return; }
-		const stillDrilled = solar.drillUp();
-		if (stillDrilled) {
-			transitionToDrill();
-		} else {
-			// Voltou às luas do tópico: reenquadra como no selectPlanet.
-			const id = solar.selectedPlanetId;
-			if (id) {
-				const extent = solar.moonsExtent(id);
-				const dist   = Math.max(55, Math.min(200, extent * 1.8 + 30));
-				orbitalCam.focusOn(new THREE.Vector3(0, 0, 0), dist);
-			}
-		}
-		emitNav();
+		deselectPlanet();
 	}
 
 	// ── Seleção de planeta ──────────────────────────────────────────────────────
@@ -294,12 +320,13 @@
 <div bind:this={containerEl} style="width:100%; height:100%; position:relative; overflow:hidden;">
 	<canvas
 		bind:this={canvasEl}
-		style="width:100%; height:100%; display:block; cursor:grab;"
+		style="width:100%; height:100%; display:block; cursor:grab; touch-action:none;"
 		onwheel={onWheel}
 		onpointerdown={onPointerDown}
 		onpointermove={onPointerMove}
 		onpointerup={onPointerUp}
-		onpointerleave={() => { pointer.down = false; }}
+		onpointercancel={onPointerUp}
+		onpointerleave={onPointerUp}
 		oncontextmenu={e => e.preventDefault()}
 	></canvas>
 

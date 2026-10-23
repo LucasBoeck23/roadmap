@@ -5,26 +5,15 @@
 	//  o painel liquid glass com README + código real. Rota própria, acessada
 	//  pelo botão "Explorar" da home.
 	// ─────────────────────────────────────────────────────────────────────────
-	import { onMount }    from 'svelte';
-	import { marked }     from 'marked';
-	import Prism          from 'prismjs';
-	import 'prismjs/components/prism-csharp';
-	import 'prismjs/components/prism-dart';
+	import { onMount, onDestroy } from 'svelte';
 	import { base }            from '$app/paths';
-	import { getTrackList, getTopicsByTrack, getReadme, getFile, flattenFiles } from '$lib/topicService.js';
-	import { statusLabel } from '$lib/tracks.js';
+	import { getTrackList, getTopicsByTrack } from '$lib/topicService.js';
 	import { PLANET_PROFILES } from '$lib/planetarium/constants.js';
 	import PlanetarySystem     from '$lib/components/PlanetarySystem.svelte';
+	import TopicModal          from '$lib/components/TopicModal.svelte';
 
 	// Cores dos planetas em CSS (cor base de cada perfil) para o HUD
 	const PLANET_HUD_COLORS = PLANET_PROFILES.map(p => '#' + p.base.toString(16).padStart(6, '0'));
-
-	// Cor do indicador de status mostrado abaixo do nome do tópico
-	const STATUS_DOT = {
-		'nao-iniciado': '#64748b',
-		'em-progresso': '#38bdf8',
-		'concluido':    '#4ade80'
-	};
 
 	// ── Estado ──────────────────────────────────────────────────────────────
 	let tracks        = $state([]);
@@ -44,44 +33,33 @@
 	// Monta o canvas só depois que o container .planet-view já tem layout real,
 	// senão o Three inicializa com tamanho 0 e a cena fica preta.
 	let ready         = $state(false);
-	// Esconde o "← início" quando um planeta está em foco (evita confusão com
-	// o gesto de voltar ao sistema completo).
+	// Esconde o "← início" quando um planeta está em foco (mostra "voltar ao
+	// sistema" no lugar).
 	let planetFocused = $state(false);
-	// Estado de navegação do drill-down (profundidade + breadcrumb) vindo do
-	// componente, para montar o controle "subir um nível" no HUD.
-	let navDepth      = $state(0);
-	let navCrumbs     = $state([]);
 
 	function handleNavChange(nav) {
 		planetFocused = nav.focused;
-		navDepth  = nav.depth ?? 0;
-		navCrumbs = nav.breadcrumb ?? [];
 	}
 
-	function subirUmNivel() {
+	// Sai do foco do planeta, voltando ao sistema solar completo.
+	function voltarAoSistema() {
 		planetaryRef?.drillUp();
 	}
 
-	const readmeCache  = new Map();
-	const contentCache = new Map();
-
-	// ── Painel do tópico (liquid glass) ─────────────────────────────────────
-	let selectedTopic    = $state(null);
-	let topicReadmeHtml  = $state('');
-	let topicPanelEl     = $state(null);
-	let topicPanelOpen   = $state(false);
-	let topicActiveFile  = $state(null);
-	let topicFileContent = $state('');
-	let topicCopied      = $state(false);
-	let topicFileHtml    = $derived.by(() => {
-		if (!topicActiveFile) return '';
-		const lang = topicActiveFile.endsWith('.dart') ? 'dart' : 'csharp';
-		const grammar = Prism.languages[lang] ?? Prism.languages.clike;
-		return Prism.highlight(topicFileContent, grammar, lang);
-	});
+	// ── Painel do tópico ────────────────────────────────────────────────────
+	// Reutiliza o MESMO modal da home (TopicModal): árvore de pastas à esquerda,
+	// código/README à direita. Clicar numa lua abre este modal — NÃO drilla mais
+	// (não constrói outra galáxia de planetas para os arquivos).
+	let selectedTopic   = $state(null);
+	let preselectFile   = $state(null);
+	let modalRef        = $state(null);
 
 	// ── Init ────────────────────────────────────────────────────────────────
 	onMount(async () => {
+		// Trava o scroll da página enquanto o planetário (canvas 3D tela cheia)
+		// está montado. A home volta a rolar normalmente ao sair daqui.
+		document.body.style.overflow = 'hidden';
+
 		// Se o usuário já pediu para não ver o aviso, pula direto.
 		try { if (localStorage.getItem(INTRO_KEY) === '1') showIntro = false; } catch {}
 
@@ -98,123 +76,24 @@
 		requestAnimationFrame(() => requestAnimationFrame(() => { ready = true; }));
 	});
 
-	// Lista de arquivos (caminhos) do tópico. Prefere a árvore (FEAT-002),
-	// caindo para o `arquivos` plano quando a árvore não existe.
-	function topicFilePaths(topic) {
-		if (topic?.tree) return flattenFiles(topic.tree).map(f => f.caminho);
-		return topic?.arquivos ?? [];
-	}
+	// Restaura o scroll da página ao sair do planetário.
+	onDestroy(() => {
+		if (typeof document !== 'undefined') document.body.style.overflow = '';
+	});
 
-	// ── Seleção de tópico ─────────────────────────────────────────────────────
-	// `preselect` (opcional) = caminho de um arquivo-folha clicado na galáxia
-	// aninhada; abre o painel já naquele arquivo e mostra o README da parte.
-	async function handleTopicSelect(topic, preselect = null) {
+	// ── Seleção de tópico (clique numa lua) ──────────────────────────────────
+	// `preselect` (opcional) = caminho de um arquivo para abrir já selecionado.
+	// Apenas abre o modal compartilhado — sem drill-down.
+	function handleTopicSelect(topic, preselect = null) {
 		selectedTopic = topic;
-		topicReadmeHtml = '';
-
-		topicActiveFile = null;
-		topicFileContent = '';
-
-		const files = topicFilePaths(topic);
-		const alvo = (preselect && files.includes(preselect)) ? preselect : (files[0] ?? null);
-		if (alvo) await selectTopicFile(alvo);
-		else await loadReadmeFor(null); // tópico vazio: só README-raiz (ou nada)
-
-		topicPanelOpen = true;
-	}
-
-	async function selectTopicFile(filePath) {
-		topicActiveFile = filePath;
-		const key = `${selectedTopic?.id}::${filePath}`;
-		if (contentCache.has(key)) topicFileContent = contentCache.get(key);
-		else {
-			const raw = await getFile(selectedTopic.pasta, filePath);
-			const content = raw ?? '// Arquivo não encontrado';
-			contentCache.set(key, content);
-			topicFileContent = content;
-		}
-		// README "da parte": README da pasta que contém o arquivo, se houver;
-		// senão, o README-raiz do tópico.
-		await loadReadmeFor(filePath);
-	}
-
-	/**
-	 * Carrega o README relevante para um arquivo: procura no `tree` a pasta que
-	 * contém o arquivo (ou um ancestral com README), caindo para o README-raiz.
-	 */
-	async function loadReadmeFor(filePath) {
-		const readmePath = readmePathForFile(selectedTopic?.tree, filePath);
-		const cacheKey = `${selectedTopic?.id}::readme::${readmePath ?? 'root'}`;
-		let md;
-		if (readmeCache.has(cacheKey)) {
-			md = readmeCache.get(cacheKey);
-		} else {
-			md = readmePath
-				? await getFile(selectedTopic.pasta, readmePath)
-				: await getReadme(selectedTopic.pasta);
-			readmeCache.set(cacheKey, md);
-		}
-		topicReadmeHtml = md
-			? marked.parse(md)
-			: '<p style="opacity:0.6; font-style:italic;">Sem conteúdo ainda para este tópico.</p>';
-	}
-
-	/**
-	 * Caminho do README "da parte" para um arquivo: README da pasta mais
-	 * próxima (contendo o arquivo) que tenha README; senão o README-raiz do
-	 * tree (readme do nó raiz); senão null (usa getReadme padrão).
-	 */
-	function readmePathForFile(root, filePath) {
-		if (!root) return null;
-		let best = root.readme ? root.readme : null; // README-raiz como fallback
-		if (filePath) {
-			const walk = (node) => {
-				const containsHere = (node.arquivos ?? []).some(a => a.caminho === filePath);
-				if (containsHere && node.readme) best = node.readme;
-				for (const sub of node.subpastas ?? []) {
-					// Só desce em subpastas cujo caminho é prefixo do arquivo.
-					if (filePath.startsWith(sub.caminho + '/') || filePath === sub.caminho) {
-						if (sub.readme) best = sub.readme;
-						walk(sub);
-					}
-				}
-			};
-			walk(root);
-		}
-		return best;
-	}
-
-	async function copyTopicCode() {
-		try {
-			await navigator.clipboard.writeText(topicFileContent);
-			topicCopied = true;
-			setTimeout(() => { topicCopied = false; }, 1600);
-		} catch {}
+		preselectFile = preselect;
+		// Se o modal já estava aberto em outro tópico, reabre no novo arquivo.
+		if (preselect) modalRef?.open?.(preselect);
 	}
 
 	function closeTopicPanel() {
-		topicPanelOpen = false;
 		selectedTopic = null;
-		topicActiveFile = null;
-		topicFileContent = '';
-	}
-
-	// ── Helpers ─────────────────────────────────────────────────────────────
-	function fileName(path) { return path.split('/').pop() ?? path; }
-
-	// Rótulo da aba: como a lista é achatada, vários arquivos aninhados podem
-	// ter o mesmo nome-base (ex.: dois "Program.cs"). Mostramos o caminho
-	// relativo ao tópico quando há pasta, para desambiguar as abas; o estado
-	// ativo e a seleção continuam usando o caminho completo.
-	function tabLabel(path) {
-		if (!path) return '';
-		return path.includes('/') ? path : fileName(path);
-	}
-	function langClass(path) {
-		if (!path) return 'language-plaintext';
-		if (path.endsWith('.cs'))   return 'language-csharp';
-		if (path.endsWith('.dart')) return 'language-dart';
-		return 'language-plaintext';
+		preselectFile = null;
 	}
 </script>
 
@@ -267,21 +146,12 @@
 		<a class="back-home" href="{base}/">← início</a>
 	{/if}
 
-	<!-- Breadcrumb / "subir um nível" — aparece ao focar/drillar -->
+	<!-- Voltar ao sistema — aparece quando um planeta está em foco -->
 	{#if planetFocused}
 		<div class="nav-stack">
-			<button class="nav-up" onclick={subirUmNivel} aria-label="Subir um nível">
-				↑ subir um nível
+			<button class="nav-up" onclick={voltarAoSistema} aria-label="Voltar ao sistema">
+				↑ voltar ao sistema
 			</button>
-			{#if navCrumbs.length}
-				<div class="nav-crumbs">
-					<span class="nav-crumb-root">●</span>
-					{#each navCrumbs as crumb, i}
-						<span class="nav-sep">/</span>
-						<span class="nav-crumb" class:current={i === navCrumbs.length - 1}>{crumb}</span>
-					{/each}
-				</div>
-			{/if}
 		</div>
 	{/if}
 
@@ -304,67 +174,14 @@
 		{/each}
 	</div>
 
-	<!-- Hint de controles -->
+	<!-- Hint de controles (texto adapta para touch no mobile via CSS) -->
 	<div class="planet-hint">
-		scroll para zoom · arrastar para navegar · clique p/ abrir uma galáxia · pastas abrem outra galáxia
+		<span class="hint-desktop">scroll para zoom · arrastar para navegar · clique num planeta p/ focar · clique numa lua p/ abrir o tópico</span>
+		<span class="hint-touch">1 dedo: girar · 2 dedos: zoom · toque: abrir</span>
 	</div>
 
-	<!-- Painel lateral do tópico (liquid glass) -->
-	{#if topicPanelOpen}
-		<div class="topic-overlay" onclick={closeTopicPanel}
-			onkeydown={(e) => e.key === 'Escape' && closeTopicPanel()}
-			role="button" tabindex="-1" aria-label="Fechar painel">
-			<div class="topic-panel glass" bind:this={topicPanelEl}
-				onclick={(e) => e.stopPropagation()}
-				onkeydown={(e) => e.stopPropagation()}
-				role="dialog" aria-modal="true" tabindex="-1">
-				<header class="topic-panel-header">
-					<div>
-						<h2 class="topic-panel-title">{selectedTopic?.nome ?? ''}</h2>
-						{#if selectedTopic?.status}
-							<span class="topic-panel-status" style="--sc:{STATUS_DOT[selectedTopic.status] ?? '#64748b'}">
-								{statusLabel(selectedTopic.status)}
-							</span>
-						{/if}
-					</div>
-					<button class="topic-panel-close" onclick={closeTopicPanel} aria-label="Fechar">✕</button>
-				</header>
-				<div class="topic-panel-content">
-					<div class="markdown-body">
-						{@html topicReadmeHtml}
-					</div>
-
-					{#if topicFilePaths(selectedTopic).length}
-						<div class="topic-code-block">
-							<div class="topic-file-tabs">
-								{#each topicFilePaths(selectedTopic) as f}
-									<button class="topic-file-tab" class:active={f === topicActiveFile}
-										title={f}
-										onclick={() => selectTopicFile(f)}>{tabLabel(f)}</button>
-								{/each}
-							</div>
-							<pre class="topic-code"><code class={langClass(topicActiveFile)}>{@html topicFileHtml}</code></pre>
-							<div class="topic-code-actions">
-								<button class="topic-ghost-btn" onclick={copyTopicCode}>
-									{topicCopied ? '✓ Copiado' : 'Copiar código'}
-								</button>
-								{#if selectedTopic?.download}
-									<a class="topic-ghost-btn" href="{base}/{selectedTopic.download}" download>
-										⬇ Baixar projeto (.zip)
-									</a>
-								{/if}
-							</div>
-						</div>
-					{:else}
-						<div class="topic-empty">
-							<span>🚧</span>
-							<p>Conteúdo em breve. Este tópico ainda está no forno.</p>
-						</div>
-					{/if}
-				</div>
-			</div>
-		</div>
-	{/if}
+	<!-- Modal do tópico — MESMO componente da home (árvore + código/README) -->
+	<TopicModal bind:this={modalRef} topic={selectedTopic} onClose={closeTopicPanel} />
 </div>
 
 <style>
@@ -546,23 +363,6 @@
 		border-color: rgba(74, 136, 199, 0.7);
 		transform: translateY(-1px);
 	}
-	.nav-crumbs {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		padding: 6px 12px;
-		border: 1px solid rgba(90, 120, 170, 0.2);
-		border-radius: 8px;
-		background: rgba(10, 16, 30, 0.5);
-		backdrop-filter: blur(6px);
-		font-family: 'JetBrains Mono', monospace;
-		font-size: 11px;
-	}
-	.nav-crumb-root { color: rgba(120, 170, 255, 0.7); }
-	.nav-sep { color: rgba(150, 170, 210, 0.35); }
-	.nav-crumb { color: rgba(190, 206, 230, 0.7); }
-	.nav-crumb.current { color: #eaf0f8; font-weight: 600; }
-
 	/* HUD — título */
 	.hud-title {
 		position: absolute;
@@ -636,20 +436,11 @@
 		letter-spacing: 0.5px;
 		pointer-events: none;
 		font-family: 'JetBrains Mono', monospace;
+		text-align: center;
+		max-width: 92vw;
 	}
-
-	/* ── Painel lateral tópico ───────────────────────────────────────────── */
-	.topic-overlay {
-		position: absolute;
-		inset: 0;
-		z-index: 50;
-		display: flex;
-		justify-content: flex-end;
-		background: rgba(4, 8, 18, 0.4);
-		backdrop-filter: blur(4px);
-		animation: topic-fade 0.3s ease;
-	}
-	@keyframes topic-fade { from { opacity: 0; } to { opacity: 1; } }
+	/* por padrão (desktop) mostra o hint de mouse; o de touch fica oculto */
+	.hint-touch { display: none; }
 
 	.glass {
 		background: rgba(10, 16, 30, 0.72);
@@ -661,148 +452,36 @@
 			inset 0 1px 0 rgba(160, 190, 240, 0.1);
 	}
 
-	.topic-panel {
-		width: min(900px, 96vw);
-		height: 100%;
-		border-radius: 28px 0 0 28px;
-		display: flex;
-		flex-direction: column;
-		overflow: hidden;
-		animation: topic-slide 0.4s cubic-bezier(.2, .8, .2, 1);
-	}
-	@keyframes topic-slide {
-		from { transform: translateX(40px); opacity: 0; }
-		to   { transform: translateX(0); opacity: 1; }
-	}
+	/* ── Mobile / telas estreitas ────────────────────────────────────────── */
+	@media (max-width: 640px) {
+		/* alterna os hints de controle */
+		.hint-desktop { display: none; }
+		.hint-touch   { display: inline; }
 
-	.topic-panel-header {
-		padding: 26px 28px 18px;
-		border-bottom: 1px solid rgba(120, 160, 220, 0.1);
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		flex-shrink: 0;
-	}
+		/* título menor e mais discreto */
+		.hud-title { top: 14px; left: 16px; }
+		.hud-title-main { font-size: 15px; letter-spacing: 3px; }
+		.hud-title-sub  { font-size: 9px; letter-spacing: 1px; }
 
-	.topic-panel-title {
-		margin: 0;
-		font-size: 1.5rem;
-		font-weight: 650;
-		letter-spacing: -0.01em;
-		color: #e8eef7;
-	}
+		/* legenda compacta no canto superior direito */
+		.hud-legend { top: 12px; right: 12px; padding: 8px 10px; gap: 4px; }
+		.hud-legend-row { font-size: 10px; gap: 6px; }
+		.hud-dot { width: 7px; height: 7px; }
 
-	.topic-panel-status {
-		display: inline-block;
-		margin-top: 8px;
-		padding: 3px 12px;
-		border-radius: 99px;
-		font-size: 0.76rem;
-		font-weight: 500;
-		color: var(--sc);
-		background: color-mix(in srgb, var(--sc) 16%, transparent);
-		border: 1px solid color-mix(in srgb, var(--sc) 35%, transparent);
-	}
+		/* hint um pouco acima para não colar nos botões de baixo */
+		.planet-hint { bottom: 60px; font-size: 10px; }
 
-	.topic-panel-close {
-		background: rgba(120, 160, 220, 0.08);
-		border: 1px solid rgba(120, 160, 220, 0.18);
-		border-radius: 10px;
-		width: 34px;
-		height: 34px;
-		color: #c3d2e6;
-		cursor: pointer;
-		font-size: 0.9rem;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		flex-shrink: 0;
-		transition: background 0.2s;
-	}
-	.topic-panel-close:hover { background: rgba(120, 160, 220, 0.18); }
+		/* botões inferiores menores e com alvo de toque confortável */
+		.back-home { bottom: 14px; left: 14px; padding: 9px 16px; font-size: 12px; }
+		.nav-stack { bottom: 14px; left: 14px; right: 14px; max-width: none; gap: 8px; }
+		.nav-up { padding: 9px 16px; }
 
-	.topic-panel-content {
-		flex: 1;
-		overflow-y: auto;
-		padding: 24px 28px 36px;
-		scrollbar-width: thin;
-		scrollbar-color: rgba(120, 160, 220, 0.2) transparent;
-	}
-
-	/* Bloco de código dentro do painel */
-	.topic-code-block {
-		margin-top: 26px;
-		border-radius: 16px;
-		overflow: hidden;
-		border: 1px solid rgba(120, 160, 220, 0.14);
-		background: rgba(0, 0, 0, 0.35);
-	}
-	.topic-file-tabs {
-		display: flex;
-		gap: 2px;
-		padding: 8px 8px 0;
-		background: rgba(120, 160, 220, 0.05);
-		overflow-x: auto;
-	}
-	.topic-file-tab {
-		background: transparent;
-		border: none;
-		color: #8ea3c0;
-		cursor: pointer;
-		padding: 8px 14px;
-		border-radius: 8px 8px 0 0;
-		font-size: 0.78rem;
-		white-space: nowrap;
-		font-family: 'JetBrains Mono', ui-monospace, monospace;
-		transition: color 0.2s, background 0.2s;
-	}
-	.topic-file-tab.active { color: #fff; background: rgba(0, 0, 0, 0.4); }
-	.topic-code {
-		margin: 0;
-		padding: 18px 20px;
-		overflow-x: auto;
-		font-family: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
-		font-size: 0.82rem;
-		line-height: 1.6;
-		color: #d6dcea;
-		scrollbar-width: thin;
-		scrollbar-color: rgba(120, 160, 220, 0.2) transparent;
-	}
-	.topic-code-actions {
-		display: flex;
-		gap: 10px;
-		padding: 12px 16px;
-		border-top: 1px solid rgba(120, 160, 220, 0.1);
-	}
-	.topic-ghost-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		background: rgba(74, 136, 199, 0.14);
-		border: 1px solid rgba(74, 136, 199, 0.4);
-		color: #e8eef7;
-		padding: 8px 16px;
-		border-radius: 10px;
-		cursor: pointer;
-		font-size: 0.82rem;
-		font-weight: 500;
-		text-decoration: none;
-		transition: background 0.2s, transform 0.2s, border-color 0.2s;
-	}
-	.topic-ghost-btn:hover {
-		background: rgba(74, 136, 199, 0.26);
-		border-color: rgba(74, 136, 199, 0.7);
-		transform: translateY(-1px);
-	}
-
-	.topic-empty {
-		text-align: center;
-		padding: 48px 20px;
-		color: #8ea3c0;
-	}
-	.topic-empty span { font-size: 2.4rem; display: block; margin-bottom: 12px; }
-
-	@media (max-width: 560px) {
-		.topic-panel { border-radius: 0; width: 100vw; }
+		/* intro em tela cheia e rolável */
+		.intro-overlay { padding: 16px; }
+		.intro-card { padding: 24px 22px 20px; max-height: 88vh; overflow-y: auto; }
+		.intro-card h2 { font-size: 1.5rem; }
+		.intro-actions { flex-direction: column-reverse; align-items: stretch; }
+		.intro-enter { width: 100%; }
+		.intro-back { text-align: center; }
 	}
 </style>

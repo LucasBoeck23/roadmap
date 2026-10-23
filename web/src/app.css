@@ -40,8 +40,12 @@ html, body {
     color: var(--text-primary);
     font-family: 'JetBrains Mono', monospace;
     font-size: 13px;
-    overflow: hidden;
-    height: 100%;
+    /* permite rolagem vertical da página (home); o scroll horizontal fica
+       desabilitado para evitar vazamentos de layout. Rotas que precisam de
+       tela cheia travada (ex.: o planetário) aplicam overflow:hidden via
+       classe no próprio container (.planet-view). */
+    min-height: 100%;
+    overflow-x: hidden;
 }
 
 /* === MARKDOWN RENDERED === */

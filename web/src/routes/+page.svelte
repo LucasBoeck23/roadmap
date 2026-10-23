@@ -5,13 +5,9 @@
 	//  código real. Dados vêm de topics.json (gerado a partir de /src).
 	// ─────────────────────────────────────────────────────────────────────────
 	import { onMount } from 'svelte';
-	import { marked }  from 'marked';
-	import Prism       from 'prismjs';
-	import 'prismjs/components/prism-csharp';
-	import 'prismjs/components/prism-dart';
 	import { base }    from '$app/paths';
-	import { getTrackList, getTopicsByTrack, getReadme, getFile, flattenFiles, findFirstFile } from '$lib/topicService.js';
-	import FileTree    from '$lib/components/FileTree.svelte';
+	import { getTrackList, getTopicsByTrack, flattenFiles } from '$lib/topicService.js';
+	import TopicModal  from '$lib/components/TopicModal.svelte';
 
 	// Metadados visuais extras por track (blurb + cores do visual premium)
 	const TRACK_SKIN = {
@@ -40,32 +36,7 @@
 	// ── Estado de navegação ──────────────────────────────────────────────────
 	let activeTrackId = $state(null);
 	let activeTrack   = $derived(tracks.find(t => t.id === activeTrackId) ?? null);
-	let selected      = $state(null);        // tópico aberto no painel
-
-	// ── Painel: árvore de pastas + viewer de código + README da parte ───────────
-	let readmeHtml   = $state('');
-	let activeFile   = $state(null);   // caminho do arquivo selecionado
-	let activeReadme = $state(null);   // caminho do README exibido à direita
-	let fileContent  = $state('');
-	let copied       = $state(false);
-	const readmeCache  = new Map();    // id::caminho-do-readme -> markdown cru
-	const contentCache = new Map();    // id::caminho -> conteúdo do arquivo
-
-	// Árvore raiz do tópico aberto (defensivo: cai p/ arquivos planos se faltar).
-	let tree = $derived.by(() => {
-		if (!selected) return null;
-		if (selected.tree) return selected.tree;
-		// fallback: monta um nó raiz a partir da lista plana `arquivos`
-		const arquivos = (selected.arquivos ?? []).map((caminho) => ({
-			nome: caminho.split('/').pop() ?? caminho,
-			caminho
-		}));
-		return {
-			nome: '', caminho: '', temReadme: !!selected.temReadme,
-			readme: selected.temReadme ? 'README.md' : null,
-			arquivos, subpastas: []
-		};
-	});
+	let selected      = $state(null);        // tópico aberto no modal
 
 	// Nº de arquivos reais (via árvore quando houver, senão lista plana).
 	function topicFileCount(topic) {
@@ -73,119 +44,10 @@
 		return topic?.arquivos?.length ?? 0;
 	}
 
-	let codeHtml = $derived.by(() => {
-		if (!activeFile) return '';
-		const lang = activeFile.endsWith('.dart') ? 'dart' : 'csharp';
-		const grammar = Prism.languages[lang] ?? Prism.languages.clike;
-		return Prism.highlight(fileContent, grammar, lang);
-	});
-
-	function fileName(path) { return path.split('/').pop() ?? path; }
-
-	// Encontra o README "da parte": o da pasta que contém `filePath`, se existir;
-	// caso contrário cai para o README raiz do tópico.
-	function readmeForFile(node, filePath, inherited) {
-		const own = node?.readme ?? inherited;
-		// o arquivo está diretamente nesta pasta?
-		if ((node?.arquivos ?? []).some((f) => f.caminho === filePath)) return own;
-		for (const child of node?.subpastas ?? []) {
-			const found = readmeForFile(child, filePath, own);
-			if (found !== undefined && found !== null) return found;
-			// se o arquivo pertence a essa subárvore mas sem README próprio,
-			// `found` pode ser o herdado — devolvemos assim que o localizarmos.
-			if (childContainsFile(child, filePath)) return found ?? own;
-		}
-		return undefined;
-	}
-
-	function childContainsFile(node, filePath) {
-		if ((node?.arquivos ?? []).some((f) => f.caminho === filePath)) return true;
-		return (node?.subpastas ?? []).some((c) => childContainsFile(c, filePath));
-	}
-
-	async function loadReadme(readmePath) {
-		if (!readmePath) {
-			readmeHtml = '<p style="opacity:.6;font-style:italic">Sem README para esta parte.</p>';
-			return;
-		}
-		// Chave com escopo no tópico: dois estudos cujo README-raiz vive em
-		// "README.md" não podem compartilhar o mesmo slot de cache.
-		const cacheKey = `${selected?.id}::${readmePath}`;
-		const md = readmeCache.has(cacheKey)
-			? readmeCache.get(cacheKey)
-			: await getFile(selected.pasta, readmePath);
-		readmeCache.set(cacheKey, md);
-		readmeHtml = md
-			? marked.parse(md)
-			: '<p style="opacity:.6;font-style:italic">Sem conteúdo ainda para esta parte.</p>';
-	}
-
-	async function openTopic(topic) {
-		selected = topic;
-		readmeHtml = '';
-		activeFile = null;
-		activeReadme = null;
-		fileContent = '';
-
-		const root = topic.tree ?? null;
-		const rootReadme = root?.readme ?? (topic.temReadme ? 'README.md' : null);
-		activeReadme = rootReadme;
-
-		// auto-seleciona o primeiro arquivo (depth-first) e mostra o README raiz
-		const first = root ? findFirstFile(root) : (topic.arquivos?.[0]
-			? { nome: fileName(topic.arquivos[0]), caminho: topic.arquivos[0] }
-			: null);
-		if (first) {
-			await selectFile(first);
-		} else {
-			await loadReadme(rootReadme);
-		}
-	}
-
-	// Seleciona um ARQUIVO (objeto {nome, caminho}) a partir da árvore.
-	async function selectFile(file) {
-		const filePath = file.caminho;
-		activeFile = filePath;
-		const key = `${selected?.id}::${filePath}`;
-		if (contentCache.has(key)) {
-			fileContent = contentCache.get(key);
-		} else {
-			const raw = await getFile(selected.pasta, filePath);
-			const content = raw ?? '// Arquivo não encontrado';
-			contentCache.set(key, content);
-			fileContent = content;
-		}
-
-		// README "da parte": o da pasta do arquivo, senão o raiz do tópico
-		const rootReadme = tree?.readme ?? (selected.temReadme ? 'README.md' : null);
-		const part = tree ? readmeForFile(tree, filePath, rootReadme) : rootReadme;
-		activeReadme = (part ?? rootReadme) ?? null;
-		await loadReadme(activeReadme);
-	}
-
-	// Seleciona explicitamente o README de uma pasta (clique no 📖 da árvore).
-	async function selectReadme(readmePath) {
-		activeFile = null;
-		fileContent = '';
-		activeReadme = readmePath;
-		await loadReadme(readmePath);
-	}
-
-	async function copyCode() {
-		try {
-			await navigator.clipboard.writeText(fileContent);
-			copied = true;
-			setTimeout(() => { copied = false; }, 1600);
-		} catch {}
-	}
-
-	function closePanel() {
-		selected = null;
-		activeFile = null;
-		activeReadme = null;
-		fileContent = '';
-		readmeHtml = '';
-	}
+	// Abre o modal do tópico — toda a lógica de árvore/código/README vive no
+	// componente TopicModal (reutilizado também pelo planetário).
+	function openTopic(topic) { selected = topic; }
+	function closePanel()     { selected = null; }
 
 	// ── Spotlight que segue o mouse (efeito premium) ───────────────────────────
 	let mx = $state(50), my = $state(30);
@@ -327,70 +189,8 @@
 		</footer>
 	</main>
 
-	<!-- ── MODAL DE TÓPICO (quase tela cheia: árvore à esquerda, conteúdo à direita) ── -->
-	{#if selected}
-		<div class="overlay" onclick={closePanel}
-			onkeydown={(e) => e.key === 'Escape' && closePanel()}
-			role="button" tabindex="-1" aria-label="Fechar modal">
-			<div class="panel glass" onclick={(e) => e.stopPropagation()}
-				onkeydown={(e) => e.stopPropagation()}
-				role="dialog" aria-modal="true" tabindex="-1">
-				<header class="panel-head">
-					<div>
-						<span class="badge" style="--bc:{STATUS[selected.status]?.cor ?? '#64748b'}">{STATUS[selected.status]?.label ?? selected.status}</span>
-						<h2>{selected.nome}</h2>
-					</div>
-					<button class="close" onclick={closePanel} aria-label="Fechar">✕</button>
-				</header>
-
-				<div class="panel-body">
-					<!-- ESQUERDA: árvore de pastas/arquivos do estudo -->
-					<aside class="tree-pane">
-						<div class="tree-header">Estrutura</div>
-						<div class="tree-scroll">
-							<FileTree
-								node={tree}
-								label={selected.nome}
-								activeFile={activeFile}
-								activeReadme={activeReadme}
-								onSelectFile={selectFile}
-								onSelectReadme={selectReadme}
-							/>
-						</div>
-					</aside>
-
-					<!-- DIREITA: código do arquivo + README da parte -->
-					<section class="content-pane">
-						{#if topicFileCount(selected) || tree?.readme}
-							{#if activeFile}
-								<div class="code-block">
-									<div class="file-tabs">
-										<span class="file-tab active">{fileName(activeFile)}</span>
-									</div>
-									<pre class="code"><code>{@html codeHtml}</code></pre>
-									<div class="code-actions">
-										<button class="ghost-btn" onclick={copyCode}>{copied ? '✓ Copiado' : 'Copiar código'}</button>
-										{#if selected.download}
-											<a class="ghost-btn" href="{base}/{selected.download}" download>⬇ Baixar projeto (.zip)</a>
-										{/if}
-									</div>
-								</div>
-							{/if}
-
-							<article class="readme markdown-body">
-								{@html readmeHtml}
-							</article>
-						{:else}
-							<div class="empty">
-								<span>🚧</span>
-								<p>Conteúdo em breve. Este tópico ainda está no forno.</p>
-							</div>
-						{/if}
-					</section>
-				</div>
-			</div>
-		</div>
-	{/if}
+	<!-- Modal do tópico — componente compartilhado (árvore + código/README) -->
+	<TopicModal topic={selected} onClose={closePanel} />
 </div>
 
 <style>
@@ -458,9 +258,11 @@
 		z-index: 2;
 		max-width: 1120px;
 		margin: 0 auto;
-		padding: clamp(48px, 9vh, 120px) 24px 40px;
-		/* ocupa ao menos a tela toda e empurra CTA+rodapé pro fundo */
-		min-height: 100vh;
+		/* padding-bottom generoso garante respiro sob o rodapé em qualquer tela */
+		padding: clamp(48px, 9vh, 120px) 24px clamp(32px, 5vh, 56px);
+		/* 100svh (small viewport height) respeita as barras do navegador mobile,
+		   evitando que o rodapé seja empurrado para fora da área visível. */
+		min-height: 100svh;
 		display: flex;
 		flex-direction: column;
 	}
@@ -553,11 +355,6 @@
 	}
 	.card:hover .card-sheen { opacity: 1; }
 	.card-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-	.badge {
-		font-size: .7rem; font-weight: 600; padding: 4px 10px; border-radius: 99px;
-		color: var(--bc); background: color-mix(in srgb, var(--bc) 16%, transparent);
-		border: 1px solid color-mix(in srgb, var(--bc) 35%, transparent);
-	}
 	.status { display: inline-flex; align-items: center; gap: 6px; font-size: .74rem; color: var(--sc); }
 	.status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--sc); box-shadow: 0 0 8px var(--sc); }
 	.card h3 { margin: 0; font-size: 1.18rem; font-weight: 600; letter-spacing: -.01em; }
@@ -568,7 +365,9 @@
 	.card:hover .arrow { transform: translateX(5px); }
 
 	/* ── FOOTER ───────────────────────────────────── */
-	/* CTA do planetário — fica ACIMA da linha divisória */
+	/* CTA do planetário — fica ACIMA da linha divisória.
+	   margin-top:auto empurra CTA+rodapé para o fim do shell; o padding-bottom
+	   do .shell garante que fiquem sempre visíveis, com respiro embaixo. */
 	.explore-cta { display: flex; justify-content: flex-end; margin-top: auto; padding-top: 56px; }
 	.foot { margin-top: 24px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,.07);
 		font-size: .84rem; color: #70778c; text-align: right; }
@@ -577,128 +376,44 @@
 		transition: background .25s, transform .25s; }
 	.planet-link:hover { background: rgba(167,139,250,.12); transform: translateY(-2px); }
 
-	/* ── OVERLAY / MODAL ──────────────────────────── */
-	.overlay {
-		position: fixed; inset: 0; z-index: 50;
-		display: flex; align-items: center; justify-content: center;
-		padding: clamp(16px, 4vh, 48px);
-		background: rgba(4,5,12,.62);
-		backdrop-filter: blur(6px);
-		animation: fade .3s ease;
-	}
-	@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
-	/* Modal grande, quase do tamanho da tela, centralizado. */
-	.panel {
-		width: min(1500px, 96vw); height: min(900px, 92vh);
-		border-radius: 24px; padding: 0;
-		display: flex; flex-direction: column;
-		animation: pop .4s cubic-bezier(.2,.8,.2,1);
-		background: rgba(14,16,26,.78);
-		overflow: hidden;
-	}
-	@keyframes pop {
-		from { transform: scale(.96) translateY(12px); opacity: 0; }
-		to   { transform: scale(1) translateY(0);      opacity: 1; }
-	}
-	.panel-head { display: flex; justify-content: space-between; align-items: flex-start;
-		padding: 26px 28px 18px; border-bottom: 1px solid rgba(255,255,255,.07); }
-	.panel-head h2 { margin: 12px 0 0; font-size: 1.5rem; font-weight: 650; }
-	.close { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
-		color: #cbd2e6; width: 34px; height: 34px; border-radius: 10px; cursor: pointer;
-		font-size: .9rem; transition: background .2s; }
-	.close:hover { background: rgba(255,255,255,.14); }
-	/* corpo em duas colunas: árvore à esquerda, conteúdo à direita */
-	.panel-body {
-		flex: 1;
-		min-height: 0;
-		display: grid;
-		/* árvore sempre à esquerda (start), conteúdo ocupa o resto */
-		grid-template-columns: minmax(240px, 320px) 1fr;
-		gap: 0;
+	/* ── Tablet / telas médias ───────────────────────────────────────────── */
+	@media (max-width: 900px) {
+		.hero { flex-direction: column; align-items: stretch; gap: 24px; }
+		/* zera o flex-basis vertical dos filhos: em coluna, o `flex:1 1 420px`
+		   do hero-text reservava 420px de ALTURA, criando um vão enorme entre o
+		   texto e o card de progresso. */
+		.hero-text { flex: 0 0 auto; max-width: none; }
+		.progress-card { flex: 0 0 auto; min-width: 0; }
 	}
 
-	.tree-pane {
-		display: flex;
-		flex-direction: column;
-		min-height: 0;
-		border-right: 1px solid rgba(255,255,255,.07);
-		background: rgba(0,0,0,.18);
-	}
-	.tree-header {
-		padding: 16px 16px 10px;
-		font-size: .72rem;
-		letter-spacing: .16em;
-		text-transform: uppercase;
-		font-weight: 600;
-		color: #8b93a9;
-	}
-	.tree-scroll {
-		overflow-y: auto;
-		padding: 0 8px 20px;
-		flex: 1;
-		min-height: 0;
-	}
-
-	.content-pane {
-		overflow-y: auto;
-		padding: 24px 28px 36px;
-		min-height: 0;
-	}
-
-	/* README vem de marked → precisa de :global para alcançar o HTML injetado */
-	.readme :global(h1) { font-size: 1.4rem; margin: 0 0 12px; color: #e8ebf5; }
-	.readme :global(h2) { font-size: 1.1rem; margin: 22px 0 8px; color: #c7cde0; }
-	.readme :global(h3) { font-size: 1rem; margin: 18px 0 6px; color: #c7cde0; }
-	.readme :global(p) { color: #aab2c8; line-height: 1.6; margin: 10px 0; }
-	.readme :global(ul),
-	.readme :global(ol) { color: #aab2c8; line-height: 1.6; padding-left: 22px; margin: 10px 0; }
-	.readme :global(li) { margin: 4px 0; }
-	.readme :global(a) { color: #7fb0e6; text-decoration: none; }
-	.readme :global(a:hover) { text-decoration: underline; }
-	.readme :global(strong) { color: #e8ebf5; font-weight: 650; }
-	.readme :global(code) { font-family: 'SF Mono', ui-monospace, monospace; font-size: .85em;
-		background: rgba(255,255,255,.08); padding: 2px 6px; border-radius: 6px; color: #d6dcea; }
-	.readme :global(pre) { background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.08);
-		border-radius: 12px; padding: 14px 16px; overflow-x: auto; margin: 14px 0; }
-	.readme :global(pre code) { background: none; padding: 0; }
-	.readme :global(blockquote) { border-left: 3px solid #7c3aed; margin: 14px 0; padding: 4px 14px;
-		color: #c3c9db; background: rgba(124,58,237,.08); border-radius: 0 8px 8px 0; }
-
-	.code-block { margin: 0 0 26px; border-radius: 16px; overflow: hidden;
-		border: 1px solid rgba(255,255,255,.08); background: rgba(0,0,0,.35); }
-	.file-tabs { display: flex; gap: 2px; padding: 8px 8px 0; background: rgba(255,255,255,.03);
-		overflow-x: auto; }
-	.file-tab { background: transparent; border: none; color: #8b93a9; cursor: pointer;
-		padding: 8px 14px; border-radius: 8px 8px 0 0; font-size: .82rem; white-space: nowrap;
-		font-family: 'SF Mono', ui-monospace, monospace; }
-	.file-tab.active { color: #fff; background: rgba(0,0,0,.4); }
-	.code { margin: 0; padding: 18px 20px; overflow-x: auto;
-		font-family: 'SF Mono', ui-monospace, 'Cascadia Code', monospace;
-		font-size: .84rem; line-height: 1.6; color: #d6dcea; }
-	.code-actions { display: flex; gap: 10px; padding: 12px 16px;
-		border-top: 1px solid rgba(255,255,255,.06); }
-	.ghost-btn { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
-		color: #d6dcea; padding: 8px 16px; border-radius: 10px; cursor: pointer; font-size: .82rem;
-		transition: background .2s, transform .2s; }
-	.ghost-btn:hover { background: rgba(255,255,255,.14); transform: translateY(-1px); }
-
-	.empty { text-align: center; padding: 48px 20px; color: #8b93a9; }
-	.empty span { font-size: 2.4rem; display: block; margin-bottom: 12px; }
-
-	/* Em telas estreitas o modal vira tela cheia e as colunas empilham:
-	   árvore em cima (rolável) e conteúdo embaixo. */
+	/* ── Mobile / telas estreitas ────────────────────────────────────────── */
 	@media (max-width: 760px) {
-		.overlay { padding: 0; }
-		.panel { border-radius: 0; width: 100vw; height: 100vh; max-height: 100vh; }
-		.panel-body {
-			grid-template-columns: 1fr;
-			grid-template-rows: auto 1fr;
-			overflow: hidden;
+		/* No mobile o conteúdo deve FLUIR e rolar naturalmente. O min-height
+		   100svh + margin-top:auto (que empurram CTA/rodapé pro fundo no desktop)
+		   faziam o hero esticar e "engolir" os cards sem habilitar o scroll. */
+		.shell {
+			min-height: auto;
+			display: block;
+			padding: clamp(32px, 7vh, 72px) 16px clamp(28px, 4vh, 44px);
 		}
-		.tree-pane {
-			border-right: none;
-			border-bottom: 1px solid rgba(255,255,255,.07);
-			max-height: 34vh;
-		}
+		.explore-cta { margin-top: 40px; }
+
+		/* hero compacto */
+		.hero h1 { font-size: clamp(2rem, 9vw, 2.8rem); }
+		.lead { font-size: 1rem; }
+
+		/* cards: 1 por linha, sem overflow horizontal */
+		.cards { grid-template-columns: 1fr; gap: 14px; }
+		.card { padding: 18px; }
+
+		/* nav de tracks rolável na horizontal se não couber */
+		.tracks-nav { margin: 36px 0 22px; flex-wrap: nowrap; overflow-x: auto;
+			-webkit-overflow-scrolling: touch; padding-bottom: 4px; }
+		.track-pill { flex: 0 0 auto; }
+
+		/* CTA e rodapé centralizados no mobile */
+		.explore-cta { justify-content: center; padding-top: 40px; }
+		.planet-link { width: 100%; text-align: center; box-sizing: border-box; }
+		.foot { text-align: center; }
 	}
 </style>
