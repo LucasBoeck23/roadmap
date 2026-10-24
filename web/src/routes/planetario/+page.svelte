@@ -196,6 +196,7 @@
 		padding: 24px;
 		background: rgba(2, 4, 10, 0.55);
 		backdrop-filter: blur(6px);
+		-webkit-backdrop-filter: blur(6px);
 		animation: intro-fade 0.4s ease;
 	}
 	@keyframes intro-fade { from { opacity: 0; } to { opacity: 1; } }
@@ -206,6 +207,8 @@
 		border-radius: 24px;
 		text-align: left;
 		animation: intro-rise 0.5s cubic-bezier(.2, .8, .2, 1);
+		/* a fonte do cartão de intro é herdada por h2/p/label/links/botão */
+		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 	}
 	@keyframes intro-rise {
 		from { transform: translateY(16px); opacity: 0; }
@@ -230,14 +233,12 @@
 		font-weight: 650;
 		letter-spacing: -0.01em;
 		color: #eaf0f8;
-		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 	}
 	.intro-card p {
 		margin: 0 0 12px;
 		font-size: 0.95rem;
 		line-height: 1.6;
 		color: #aeb8c8;
-		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 	}
 	.intro-card strong { color: #e2e8f2; font-weight: 600; }
 	.intro-note { font-size: 0.88rem; color: #8a94a6; }
@@ -251,7 +252,6 @@
 		color: #9fb0c6;
 		cursor: pointer;
 		user-select: none;
-		font-family: -apple-system, system-ui, sans-serif;
 	}
 	.intro-dontshow input {
 		width: 16px; height: 16px;
@@ -271,7 +271,6 @@
 		color: #9fb0c6;
 		text-decoration: none;
 		font-size: 0.86rem;
-		font-family: -apple-system, system-ui, sans-serif;
 		transition: color 0.2s;
 	}
 	.intro-back:hover { color: #e2e8f2; }
@@ -296,6 +295,10 @@
 		background: #000008;
 		position: relative;
 		overflow: hidden;
+		/* fonte do HUD (título, legenda, hint) herdada deste container.
+		   O .intro-card sobrescreve para a fonte system-ui; o botão .nav-up
+		   redeclara porque <button> não herda font-family de forma confiável. */
+		font-family: 'JetBrains Mono', monospace;
 	}
 
 	/* Vinheta cinematográfica — escurece as bordas */
@@ -321,6 +324,7 @@
 		border: 1px solid rgba(120, 160, 220, 0.25);
 		background: rgba(10, 16, 30, 0.5);
 		backdrop-filter: blur(8px);
+		-webkit-backdrop-filter: blur(8px);
 		color: #c3d2e6;
 		font-size: 12px;
 		letter-spacing: 0.5px;
@@ -351,6 +355,7 @@
 		border: 1px solid rgba(120, 160, 220, 0.3);
 		background: rgba(74, 136, 199, 0.18);
 		backdrop-filter: blur(8px);
+		-webkit-backdrop-filter: blur(8px);
 		color: #dce8f6;
 		font-size: 12px;
 		letter-spacing: 0.5px;
@@ -370,7 +375,6 @@
 		left: 26px;
 		pointer-events: none;
 		z-index: 10;
-		font-family: 'JetBrains Mono', monospace;
 	}
 	.hud-title-main {
 		font-size: 20px;
@@ -401,7 +405,7 @@
 		border-radius: 8px;
 		background: rgba(10, 16, 30, 0.5);
 		backdrop-filter: blur(6px);
-		font-family: 'JetBrains Mono', monospace;
+		-webkit-backdrop-filter: blur(6px);
 		pointer-events: none;
 	}
 	.hud-legend-row {
@@ -435,7 +439,6 @@
 		color: rgba(150, 170, 200, 0.5);
 		letter-spacing: 0.5px;
 		pointer-events: none;
-		font-family: 'JetBrains Mono', monospace;
 		text-align: center;
 		max-width: 92vw;
 	}
