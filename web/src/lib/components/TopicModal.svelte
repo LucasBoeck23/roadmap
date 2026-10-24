@@ -13,16 +13,10 @@
 	import 'prismjs/components/prism-dart';
 	import { base }   from '$app/paths';
 	import { getFile, flattenFiles, findFirstFile } from '$lib/topicService.js';
-	import { statusLabel } from '$lib/tracks.js';
+	import { STATUS, statusLabel } from '$lib/tracks.js';
 	import FileTree   from '$lib/components/FileTree.svelte';
 
 	let { topic = null, onClose } = $props();
-
-	const STATUS = {
-		'nao-iniciado': { label: 'Não iniciado', cor: '#64748b' },
-		'em-progresso': { label: 'Estudando',    cor: '#38bdf8' },
-		'concluido':    { label: 'Concluído',    cor: '#4ade80' }
-	};
 
 	let readmeHtml   = $state('');
 	let activeFile   = $state(null);
@@ -252,6 +246,7 @@
 		padding: clamp(16px, 4vh, 48px);
 		background: rgba(4,5,12,.62);
 		backdrop-filter: blur(6px);
+		-webkit-backdrop-filter: blur(6px);
 		animation: fade .3s ease;
 	}
 	@keyframes fade { from { opacity: 0; } to { opacity: 1; } }

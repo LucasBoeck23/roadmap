@@ -6,7 +6,8 @@
 	// ─────────────────────────────────────────────────────────────────────────
 	import { onMount } from 'svelte';
 	import { base }    from '$app/paths';
-	import { getTrackList, getTopicsByTrack, flattenFiles } from '$lib/topicService.js';
+	import { getTrackList, getTopicsByTrack } from '$lib/topicService.js';
+	import TopicCard   from '$lib/components/TopicCard.svelte';
 	import TopicModal  from '$lib/components/TopicModal.svelte';
 
 	// Metadados visuais extras por track (blurb + cores do visual premium)
@@ -15,12 +16,6 @@
 		flutter: { cor: '#38bdf8', blurb: 'Apps multiplataforma bonitos e performáticos.' }
 	};
 	function skin(id) { return TRACK_SKIN[id] ?? { cor: '#7fb0e6', blurb: '' }; }
-
-	const STATUS = {
-		'nao-iniciado': { label: 'Não iniciado', cor: '#64748b' },
-		'em-progresso': { label: 'Estudando',    cor: '#38bdf8' },
-		'concluido':    { label: 'Concluído',    cor: '#4ade80' }
-	};
 
 	// ── Dados reais ────────────────────────────────────────────────────────────
 	let tracks = $state([]);              // [{ id, nome, cor, blurb, topics:[...] }]
@@ -37,12 +32,6 @@
 	let activeTrackId = $state(null);
 	let activeTrack   = $derived(tracks.find(t => t.id === activeTrackId) ?? null);
 	let selected      = $state(null);        // tópico aberto no modal
-
-	// Nº de arquivos reais (via árvore quando houver, senão lista plana).
-	function topicFileCount(topic) {
-		if (topic?.tree) return flattenFiles(topic.tree).length;
-		return topic?.arquivos?.length ?? 0;
-	}
 
 	// Abre o modal do tópico — toda a lógica de árvore/código/README vive no
 	// componente TopicModal (reutilizado também pelo planetário).
@@ -152,28 +141,7 @@
 
 			<div class="cards">
 				{#each activeTrack.topics as topic, i}
-					<button
-						class="card glass"
-						style="--tc:{activeTrack.cor}; --d:{i * 70}ms"
-						onclick={() => openTopic(topic)}
-					>
-						<div class="card-sheen"></div>
-						<div class="card-top">
-							<span class="status" style="--sc:{STATUS[topic.status]?.cor ?? '#64748b'}">
-								<span class="status-dot"></span>{STATUS[topic.status]?.label ?? topic.status}
-							</span>
-						</div>
-						<h3>{topic.nome}</h3>
-						<div class="card-foot">
-							{#if topicFileCount(topic)}
-								{@const n = topicFileCount(topic)}
-								<span>{n} arquivo{n !== 1 ? 's' : ''}</span>
-							{:else}
-								<span class="muted">em breve</span>
-							{/if}
-							<span class="arrow">→</span>
-						</div>
-					</button>
+					<TopicCard {topic} cor={activeTrack.cor} index={i} onOpen={openTopic} />
 				{/each}
 			</div>
 		</section>
@@ -335,34 +303,6 @@
 		display: grid; gap: 18px;
 		grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
 	}
-	.card {
-		position: relative; overflow: hidden; text-align: left;
-		padding: 22px; border-radius: 22px; cursor: pointer; color: inherit;
-		opacity: 0; transform: translateY(16px);
-		animation: rise .6s cubic-bezier(.2,.8,.2,1) forwards; animation-delay: var(--d);
-		transition: transform .3s cubic-bezier(.2,.8,.2,1), border-color .3s, box-shadow .3s;
-	}
-	@keyframes rise { to { opacity: 1; transform: translateY(0); } }
-	.card:hover {
-		transform: translateY(-6px);
-		border-color: color-mix(in srgb, var(--tc) 50%, transparent);
-		box-shadow: 0 20px 50px rgba(0,0,0,.45), 0 0 0 1px color-mix(in srgb, var(--tc) 30%, transparent);
-	}
-	.card-sheen {
-		position: absolute; inset: 0; pointer-events: none; opacity: 0;
-		background: radial-gradient(400px circle at 50% 0%, color-mix(in srgb, var(--tc) 18%, transparent), transparent 60%);
-		transition: opacity .3s;
-	}
-	.card:hover .card-sheen { opacity: 1; }
-	.card-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-	.status { display: inline-flex; align-items: center; gap: 6px; font-size: .74rem; color: var(--sc); }
-	.status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--sc); box-shadow: 0 0 8px var(--sc); }
-	.card h3 { margin: 0; font-size: 1.18rem; font-weight: 600; letter-spacing: -.01em; }
-	.card-foot { display: flex; justify-content: space-between; align-items: center;
-		margin-top: 20px; font-size: .82rem; color: var(--g-text-muted); }
-	.card-foot .muted { opacity: .6; }
-	.card .arrow { font-size: 1.1rem; transition: transform .3s; color: color-mix(in srgb, var(--tc) 80%, #fff); }
-	.card:hover .arrow { transform: translateX(5px); }
 
 	/* ── FOOTER ───────────────────────────────────── */
 	/* CTA do planetário — fica ACIMA da linha divisória.
@@ -402,9 +342,9 @@
 		.hero h1 { font-size: clamp(2rem, 9vw, 2.8rem); }
 		.lead { font-size: 1rem; }
 
-		/* cards: 1 por linha, sem overflow horizontal */
+		/* cards: 1 por linha, sem overflow horizontal (o padding do card
+		   em si é tratado dentro do próprio TopicCard) */
 		.cards { grid-template-columns: 1fr; gap: 14px; }
-		.card { padding: 18px; }
 
 		/* nav de tracks rolável na horizontal se não couber */
 		.tracks-nav { margin: 36px 0 22px; flex-wrap: nowrap; overflow-x: auto;
