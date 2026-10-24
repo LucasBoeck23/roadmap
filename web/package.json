@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "generate-topics": "node scripts/generate-topics.js",
+    "count-lines": "node scripts/count-lines.js",
     "prebuild": "node scripts/generate-topics.js",
     "predev": "node scripts/generate-topics.js",
     "dev": "vite dev",

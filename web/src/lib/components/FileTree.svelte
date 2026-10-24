@@ -104,14 +104,14 @@
 		border-radius: 8px;
 		transition: background .18s, color .18s;
 	}
-	.row:hover { background: rgba(255,255,255,.06); color: #e8ebf5; }
+	.row:hover { background: rgba(255,255,255,.06); color: var(--g-text); }
 
 	.folder { font-weight: 600; color: #cbd2e6; }
 
 	.file.active {
-		background: color-mix(in srgb, #7c3aed 24%, transparent);
+		background: color-mix(in srgb, var(--g-violet-strong) 24%, transparent);
 		color: #fff;
-		box-shadow: inset 2px 0 0 #a78bfa;
+		box-shadow: inset 2px 0 0 var(--g-violet);
 	}
 
 	.readme-row { color: #9fb6e6; }

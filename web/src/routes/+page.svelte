@@ -201,7 +201,7 @@
 		min-height: 100vh;
 		overflow-x: hidden;
 		background: #06070e;
-		color: #e8ebf5;
+		color: var(--g-text);
 		font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
 		-webkit-font-smoothing: antialiased;
 	}
@@ -229,7 +229,7 @@
 		animation: float 18s ease-in-out infinite;
 	}
 	.a1 { width: 560px; height: 560px; top: -140px; left: -120px;
-		background: radial-gradient(circle, #7c3aed, transparent 70%); }
+		background: radial-gradient(circle, var(--g-violet-strong), transparent 70%); }
 	.a2 { width: 620px; height: 620px; top: 10%; right: -180px;
 		background: radial-gradient(circle, #0ea5e9, transparent 70%); animation-delay: -6s; }
 	.a3 { width: 520px; height: 520px; bottom: -160px; left: 30%;
@@ -248,8 +248,8 @@
 	.glass {
 		background: rgba(255,255,255,.045);
 		border: 1px solid rgba(255,255,255,.09);
-		backdrop-filter: blur(22px) saturate(140%);
-		-webkit-backdrop-filter: blur(22px) saturate(140%);
+		backdrop-filter: var(--glass-blur);
+		-webkit-backdrop-filter: var(--glass-blur);
 		box-shadow: 0 8px 40px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.08);
 	}
 
@@ -278,7 +278,7 @@
 	.hero-text { max-width: 640px; flex: 1 1 420px; }
 	.eyebrow {
 		font-size: .72rem; letter-spacing: .22em; font-weight: 600;
-		color: #a78bfa; opacity: .9;
+		color: var(--g-violet); opacity: .9;
 	}
 	.hero h1 {
 		font-size: clamp(2.4rem, 6vw, 4.2rem);
@@ -286,32 +286,32 @@
 		margin: 18px 0 0;
 	}
 	.grad {
-		background: linear-gradient(100deg, #a78bfa, #38bdf8 60%, #f0abfc);
+		background: linear-gradient(100deg, var(--g-violet), var(--g-sky) 60%, #f0abfc);
 		-webkit-background-clip: text; background-clip: text; color: transparent;
 	}
 	.lead {
 		margin: 22px 0 0; max-width: 560px;
-		font-size: 1.08rem; line-height: 1.6; color: #aab2c8;
+		font-size: 1.08rem; line-height: 1.6; color: var(--g-text-dim);
 	}
 
 	.progress-card { padding: 20px 22px; border-radius: 20px; flex: 0 1 360px; min-width: 300px; }
 	.progress-head { display: flex; justify-content: space-between; align-items: baseline;
 		font-size: .9rem; color: #c3c9db; }
 	.progress-pct { font-size: 1.5rem; font-weight: 700;
-		background: linear-gradient(90deg,#a78bfa,#38bdf8); -webkit-background-clip: text; background-clip: text; color: transparent; }
-	.progress-track { height: 8px; border-radius: 99px; background: rgba(255,255,255,.08);
+		background: linear-gradient(90deg,var(--g-violet),var(--g-sky)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+	.progress-track { height: 8px; border-radius: var(--radius-pill); background: rgba(255,255,255,.08);
 		margin: 14px 0 12px; overflow: hidden; }
-	.progress-fill { height: 100%; border-radius: 99px;
-		background: linear-gradient(90deg,#7c3aed,#38bdf8);
+	.progress-fill { height: 100%; border-radius: var(--radius-pill);
+		background: linear-gradient(90deg,var(--g-violet-strong),var(--g-sky));
 		box-shadow: 0 0 16px rgba(99,102,241,.6); transition: width .1s linear; }
-	.progress-meta { display: flex; gap: 18px; font-size: .82rem; color: #8b93a9; }
-	.progress-meta b { color: #e8ebf5; }
+	.progress-meta { display: flex; gap: 18px; font-size: .82rem; color: var(--g-text-muted); }
+	.progress-meta b { color: var(--g-text); }
 
 	/* ── TRACKS NAV ───────────────────────────────── */
 	.tracks-nav { display: flex; gap: 12px; margin: 54px 0 28px; flex-wrap: wrap; }
 	.track-pill {
 		display: inline-flex; align-items: center; gap: 10px;
-		padding: 11px 20px; border-radius: 99px; cursor: pointer;
+		padding: 11px 20px; border-radius: var(--radius-pill); cursor: pointer;
 		color: #cbd2e6; font-size: .95rem; font-weight: 500;
 		transition: transform .25s cubic-bezier(.2,.8,.2,1), border-color .25s, color .25s;
 	}
@@ -359,7 +359,7 @@
 	.status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--sc); box-shadow: 0 0 8px var(--sc); }
 	.card h3 { margin: 0; font-size: 1.18rem; font-weight: 600; letter-spacing: -.01em; }
 	.card-foot { display: flex; justify-content: space-between; align-items: center;
-		margin-top: 20px; font-size: .82rem; color: #8b93a9; }
+		margin-top: 20px; font-size: .82rem; color: var(--g-text-muted); }
 	.card-foot .muted { opacity: .6; }
 	.card .arrow { font-size: 1.1rem; transition: transform .3s; color: color-mix(in srgb, var(--tc) 80%, #fff); }
 	.card:hover .arrow { transform: translateX(5px); }
@@ -371,8 +371,8 @@
 	.explore-cta { display: flex; justify-content: flex-end; margin-top: auto; padding-top: 56px; }
 	.foot { margin-top: 24px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,.07);
 		font-size: .84rem; color: #70778c; text-align: right; }
-	.planet-link { color: #a78bfa; text-decoration: none; font-weight: 500;
-		padding: 10px 20px; border-radius: 99px; border: 1px solid rgba(167,139,250,.3);
+	.planet-link { color: var(--g-violet); text-decoration: none; font-weight: 500;
+		padding: 10px 20px; border-radius: var(--radius-pill); border: 1px solid rgba(167,139,250,.3);
 		transition: background .25s, transform .25s; }
 	.planet-link:hover { background: rgba(167,139,250,.12); transform: translateY(-2px); }
 

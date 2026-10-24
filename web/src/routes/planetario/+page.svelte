@@ -221,7 +221,7 @@
 		border: 1px solid rgba(120, 160, 220, 0.3);
 		background: rgba(120, 160, 220, 0.1);
 		padding: 4px 12px;
-		border-radius: 99px;
+		border-radius: var(--radius-pill);
 		margin-bottom: 16px;
 	}
 	.intro-card h2 {
@@ -280,7 +280,7 @@
 		border: 1px solid rgba(120, 180, 255, 0.5);
 		color: #eaf0f8;
 		padding: 10px 20px;
-		border-radius: 99px;
+		border-radius: var(--radius-pill);
 		cursor: pointer;
 		font-size: 0.9rem;
 		font-weight: 500;
@@ -317,7 +317,7 @@
 		left: 26px;
 		z-index: 15;
 		padding: 8px 18px;
-		border-radius: 99px;
+		border-radius: var(--radius-pill);
 		border: 1px solid rgba(120, 160, 220, 0.25);
 		background: rgba(10, 16, 30, 0.5);
 		backdrop-filter: blur(8px);
@@ -347,7 +347,7 @@
 	}
 	.nav-up {
 		padding: 8px 18px;
-		border-radius: 99px;
+		border-radius: var(--radius-pill);
 		border: 1px solid rgba(120, 160, 220, 0.3);
 		background: rgba(74, 136, 199, 0.18);
 		backdrop-filter: blur(8px);
@@ -445,8 +445,8 @@
 	.glass {
 		background: rgba(10, 16, 30, 0.72);
 		border: 1px solid rgba(120, 160, 220, 0.14);
-		backdrop-filter: blur(22px) saturate(140%);
-		-webkit-backdrop-filter: blur(22px) saturate(140%);
+		backdrop-filter: var(--glass-blur);
+		-webkit-backdrop-filter: var(--glass-blur);
 		box-shadow: 0 8px 40px rgba(0, 0, 0, 0.45),
 			0 0 60px rgba(74, 136, 199, 0.08),
 			inset 0 1px 0 rgba(160, 190, 240, 0.1);

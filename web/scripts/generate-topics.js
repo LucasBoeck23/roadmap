@@ -8,7 +8,7 @@
  *
  * topics.json: { [trackId]: Topic[] }
  * Topic = {
- *   id, nome, nivel, pasta, temReadme, status, download,
+ *   id, nome, pasta, temReadme, status, download,
  *   arquivos: string[],   // lista PLANA (retrocompatível) de caminhos relativos a `pasta`
  *   tree: Node            // hierarquia recursiva de pastas (nova fonte da verdade)
  * }
@@ -40,14 +40,6 @@ const ZIP_IGNORE = new Set(['bin', 'obj', '.git', '.vs', '.idea', 'node_modules'
 
 // Extensões de código que são expostas no viewer
 const CODE_EXTS = ['.cs', '.dart'];
-
-// Mesmo mapeamento da MSBuild task
-const NIVEL_MAP = {
-	'01': 'trainee', '02': 'trainee',
-	'03': 'junior',  '04': 'junior', '05': 'junior', '06': 'junior', '07': 'junior',
-	'08': 'pleno',   '09': 'pleno',  '10': 'pleno',  '11': 'pleno',
-	'12': 'senior',  '13': 'senior'
-};
 
 function isDir(p) {
 	return statSync(p).isDirectory();
@@ -211,8 +203,6 @@ async function main() {
 		tracks[track.name] = [];
 
 		for (const topicDir of listDirs(track.full)) {
-			const prefix = topicDir.name.slice(0, 2);
-			const nivel  = NIVEL_MAP[prefix] ?? 'outro';
 			const nome   = topicDir.name.replace(/^\d+-/, '');
 			const pasta  = `src/${track.name}/${topicDir.name}`;
 			const destBase = join(OUT_SRC, track.name, topicDir.name);
@@ -247,7 +237,6 @@ async function main() {
 			tracks[track.name].push({
 				id:        topicDir.name,
 				nome,
-				nivel,
 				pasta,
 				temReadme,
 				status,
