@@ -51,52 +51,6 @@ tests/                       → Testes dos exemplos
 
 ---
 
-## 🧭 Trilhas
-
-### 🟦 C# / .NET
-| Módulo | Status |
-|--------|--------|
-| 01-Fundamentos | � Em andamento |
-| 02-POO | ⬜ A fazer |
-
-### � Flutter / Dart
-| Módulo | Status |
-|--------|--------|
-| 01-Dart-Basico | � Em andamento |
-| 02-Widgets | ⬜ A fazer |
-| 03-Layouts | ⬜ A fazer |
-
----
-
-## 🏃 Como Rodar
-
-### Trilha C# / .NET
-Pré-requisito: [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8) ou superior.
-
-```bash
-cd src/csharp/01-Fundamentos/Projeto
-dotnet run
-```
-
-### Trilha Flutter / Dart
-Pré-requisito: [Flutter SDK](https://docs.flutter.dev/get-started/install).
-
-```bash
-cd src/flutter/01-Dart-Basico
-# siga o README do módulo
-```
-
-### Visualização web (planetário)
-Pré-requisito: [Node.js 20+](https://nodejs.org/).
-
-```bash
-cd web
-npm install
-npm run dev
-```
-
----
-
 ## 💡 Filosofia do Projeto
 
 1. **Aprenda fazendo** — Cada conceito tem código executável, não só teoria
@@ -110,8 +64,6 @@ npm run dev
 
 | Categoria | Tecnologia |
 |-----------|-----------|
-| Linguagens | C# 12+, Dart |
-| Frameworks | .NET 8+, Flutter |
 | Visualização web | SvelteKit, Three.js |
 | CI/CD | GitHub Actions + GitHub Pages |
 
